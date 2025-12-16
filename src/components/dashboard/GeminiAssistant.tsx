@@ -45,7 +45,7 @@ export function GeminiAssistant() {
     const steps = missionId ? missions[missionId]?.coachSteps || [] : [];
     const step = steps[currentStep];
     const isStepDone = step ? step.success(snap, knobs) : false;
-    const isMissionComplete = currentStep >= steps.length;
+    const isMissionComplete = steps.length > 0 && steps.every((s) => s.success(snap, knobs));
 
     return (
         <Card className="w-full h-[600px] flex flex-col border-indigo-200 dark:border-indigo-800 shadow-sm">

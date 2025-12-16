@@ -18,6 +18,7 @@ interface SimState {
     guideMode: boolean;
     currentStep: number;
     learningMode: boolean;
+    setCurrentStep: (idx: number) => void;
 
     // Gemini State
     isGeminiOpen: boolean; // Keep for now if we want to toggle visibility, though it's always visible in sidebar
@@ -33,6 +34,7 @@ interface SimState {
     nextStep: () => void;
     prevStep: () => void;
     applyStep: () => void;
+    applyStepByIndex: (idx: number) => void;
 
     // Gemini Actions
     toggleGemini: () => void;
@@ -52,6 +54,14 @@ export const useSimStore = create<SimState>((set, get) => ({
     guideMode: false,
     learningMode: false,
     currentStep: 0,
+
+    setCurrentStep: (idx) =>
+        set((s) => ({
+            currentStep: Math.min(
+                Math.max(idx, 0),
+                s.missionId ? missions[s.missionId].coachSteps.length : 0
+            ),
+        })),
 
     isGeminiOpen: true, // Default open for sidebar
     chatHistory: [],
@@ -84,7 +94,7 @@ export const useSimStore = create<SimState>((set, get) => ({
         if (!missionId) return;
         set({
             guideMode: true,
-            learningMode: false, // Mutual exclusive with guide? Maybe not strictly, but good for focus
+            learningMode: true,
             currentStep: 0,
             chatHistory: [{
                 role: "model",
@@ -115,6 +125,20 @@ export const useSimStore = create<SimState>((set, get) => ({
         set({
             knobs: newKnobs,
             snapshot: simulate(missionId, newKnobs),
+        });
+    },
+
+    applyStepByIndex: (idx) => {
+        const { missionId, knobs } = get();
+        if (!missionId) return;
+        const step = missions[missionId].coachSteps[idx];
+        if (!step) return;
+
+        const newKnobs = { ...knobs, ...step.expectedKnobDiff };
+        set({
+            knobs: newKnobs,
+            snapshot: simulate(missionId, newKnobs),
+            currentStep: idx,
         });
     },
 
