@@ -9,12 +9,12 @@ import { Separator } from "@/components/ui/separator";
 
 export function CoachPanel({ snap }: { snap: Snapshot }) {
     const missionId = useSimStore((s) => s.missionId) as MissionId;
-    const coachEnabled = useSimStore((s) => s.coachEnabled);
-    const coachIndex = useSimStore((s) => s.coachIndex);
-    const next = useSimStore((s) => s.nextCoach);
-    const prev = useSimStore((s) => s.prevCoach);
-    const jump = useSimStore((s) => s.jumpCoach);
-    const apply = useSimStore((s) => s.applyCoachStep);
+    const learningMode = useSimStore((s) => s.learningMode);
+    const coachIndex = useSimStore((s) => s.currentStep);
+    const next = useSimStore((s) => s.nextStep);
+    const prev = useSimStore((s) => s.prevStep);
+    const jump = useSimStore((s) => s.setCurrentStep);
+    const apply = useSimStore((s) => s.applyStep);
     const knobs = useSimStore((s) => s.knobs)!;
 
     const steps = missions[missionId].coachSteps;
@@ -22,7 +22,7 @@ export function CoachPanel({ snap }: { snap: Snapshot }) {
     const done = step.success(snap, knobs);
     const allDone = steps.every((s) => s.success(snap, knobs));
 
-    if (!coachEnabled) return null;
+    if (!learningMode) return null;
 
     if (allDone) {
         return (
