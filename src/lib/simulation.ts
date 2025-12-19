@@ -775,6 +775,27 @@ export function simulate(missionId: MissionId, knobs: Knobs): Snapshot {
         );
     }
 
+    if (knobs.repartition) {
+        stages = stages.map((s) => ({
+            ...s,
+            durationMs: Math.round(s.durationMs * 1.15), // Shuffle overhead
+            shuffleReadMB: Math.round(s.shuffleReadMB + 50),
+            shuffleWriteMB: Math.round(s.shuffleWriteMB + 50),
+            skewScore: clamp(s.skewScore * 0.5, 0, 1), // Major skew fix
+        }));
+        shuffleIntensity = clamp(shuffleIntensity + 0.2, 0, 1);
+        notes.push("Repartition adds a full shuffle to even out data distribution.");
+    }
+
+    if (knobs.coalesce) {
+        stages = stages.map((s) => ({
+            ...s,
+            durationMs: Math.round(s.durationMs * 1.05), // Potential loss of parallelism
+        }));
+        if (typeof fileImpactPct === "number") fileImpactPct = clamp(fileImpactPct - 15, 5, 95);
+        notes.push("Coalesce reduces partition count, helping with downstream file overhead.");
+    }
+
     // Mission-specific logic
     if (missionId === "etl_joins") {
         const thresholdOk = knobs.broadcastThresholdMB >= 10;

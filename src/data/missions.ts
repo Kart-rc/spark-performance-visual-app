@@ -14,6 +14,8 @@ export const defaultKnobs: Knobs = {
     filterEarly: false,
     useUdf: true, // Bad default for Mission 7
     optimizeJoinOrder: false, // Bad default for Mission 9
+    repartition: false,
+    coalesce: false,
 };
 
 function mergeKnobs(base: Knobs, patch: Partial<Knobs>): Knobs {
@@ -35,6 +37,8 @@ export const missions: Record<MissionId, Mission> = {
             cacheAfterClean: false,
             projectEarly: false,
             filterEarly: false,
+            repartition: false,
+            coalesce: false,
         }),
         initialKnobs: mergeKnobs(defaultKnobs, {
             aqe: false,
@@ -44,6 +48,8 @@ export const missions: Record<MissionId, Mission> = {
             cacheAfterClean: false,
             projectEarly: false,
             filterEarly: false,
+            repartition: false,
+            coalesce: false,
         }),
         coachSteps: [
             {
@@ -132,6 +138,8 @@ export const missions: Record<MissionId, Mission> = {
             dynamicPruning: false,
             projectEarly: false,
             filterEarly: false,
+            repartition: false,
+            coalesce: false,
         }),
         initialKnobs: mergeKnobs(defaultKnobs, {
             optimizeBeforeMerge: false,
@@ -142,6 +150,8 @@ export const missions: Record<MissionId, Mission> = {
             dynamicPruning: true,
             projectEarly: true,
             filterEarly: true,
+            repartition: false,
+            coalesce: false,
         }),
         coachSteps: [
             {
@@ -219,6 +229,8 @@ export const missions: Record<MissionId, Mission> = {
             filterEarly: false,
             cacheAfterClean: false,
             dynamicPruning: false,
+            repartition: false,
+            coalesce: false,
         }),
         initialKnobs: mergeKnobs(defaultKnobs, {
             aqe: false,
@@ -228,67 +240,278 @@ export const missions: Record<MissionId, Mission> = {
             filterEarly: true,
             cacheAfterClean: false,
             dynamicPruning: false,
+            repartition: false,
+            coalesce: false,
         }),
         coachSteps: [
             {
-                id: "sk_s1",
-                title: "Spot the long tail",
-                prompt:
-                    "Look for high **Skew%** and a stage with long duration even when shuffle isn't extreme.",
+                id: "sk_s1_diagnose",
+                type: "diagnostic",
+                title: "Diagnose: Identify skew pattern",
+                prompt: "Examine the Stages table. Look for high Skew% (>75%) and uneven task distribution.",
+
+                problemPattern: "Uneven data distribution causes long-tail tasks - job 'almost finishes' then stalls on 1-2 slow tasks",
+
+                metricsToWatch: {
+                    before: [
+                        { metric: "skew", threshold: 0.75, comparison: ">", context: "Skew >75% indicates severe data imbalance" },
+                        { metric: "duration", threshold: 80, comparison: ">", context: "One slow task dominates stage time" }
+                    ],
+                    after: []
+                },
+
+                whyNow: "Always diagnose the data distribution pattern before choosing fixes. Skew requires different strategies than shuffle or spill problems.",
+
+                realWorldScenario: `In production Spark UI, navigate to the 'Stages' tab and click on a running stage.
+You'd see the Tasks timeline showing 1-2 tasks taking 10x longer than others - that's the 'long tail'.
+Common causes: popular customer IDs, date partitions with uneven data, or NULL key aggregations.`,
+
                 expectedKnobDiff: {},
-                rationale:
-                    "Skew is about uneven work distribution. A single partition can dominate runtime.",
-                success: (snap) => snap.stages.some((s) => s.skewScore > 0.75),
+                rationale: "Skew is about uneven work distribution across partitions. A single hot partition can dominate runtime even if total data volume is moderate.",
+
+                success: (snap) => {
+                    const skew = Math.max(...snap.stages.map(s => s.skewScore));
+                    const completed = skew > 0.75;
+                    return {
+                        completed,
+                        progress: completed ? 100 : Math.min((skew / 0.75) * 100, 95),
+                        feedback: completed
+                            ? `Correct! Skew detected at ${(skew * 100).toFixed(0)}% - one partition is much larger than others.`
+                            : `Current skew: ${(skew * 100).toFixed(0)}%. Look for stages with Skew >75% in the metrics table.`
+                    };
+                }
             },
             {
-                id: "sk_s2",
-                title: "Reduce payload",
-                prompt: "Turn on **Project Early** to shrink per-row payload.",
+                id: "sk_s2_fix_project",
+                type: "fix",
+                title: "Fix: Reduce payload with projection",
+                prompt: "Turn on **Project Early** to select only necessary columns, reducing payload per partition.",
+
+                problemPattern: "Wide rows amplify skew impact - the hot partition handles MORE data per row",
+
+                metricsToWatch: {
+                    before: [
+                        { metric: "shuffle", threshold: 350, comparison: ">", context: "Current shuffle volume" }
+                    ],
+                    after: [
+                        { metric: "shuffle", threshold: 280, comparison: "<", context: "Target: ~20% reduction in shuffle" }
+                    ]
+                },
+
+                whyNow: "After identifying skew, reduce the data volume BEFORE applying more complex optimizations. This makes the hot partition's workload smaller.",
+
+                realWorldScenario: `In your query, change SELECT * to SELECT customer_id, order_total, order_date.
+Even though the skewed partition still has the same number of rows, each row is smaller, reducing memory pressure and I/O.`,
+
                 expectedKnobDiff: { projectEarly: true },
-                rationale:
-                    "Skewed partitions hurt more when each row is wide. Column pruning reduces memory and IO pressure.",
-                success: (_snap, knobs) => knobs.projectEarly,
+                rationale: "Column pruning reduces bytes per row. When combined with skew, this means the hot partition processes less total data.",
+
+                success: (_snap, knobs) => {
+                    const completed = knobs.projectEarly;
+                    return {
+                        completed,
+                        progress: completed ? 100 : 0,
+                        feedback: completed
+                            ? "Projection enabled. Payload per row is now smaller, helping the skewed partition."
+                            : "Enable 'Project Early' in the Control Panel to reduce column width."
+                    };
+                }
             },
             {
-                id: "sk_s3",
-                title: "Filter before the hotspot",
-                prompt:
-                    "Turn on **Filter Early** so fewer rows hit the skewed join/agg.",
+                id: "sk_s3_fix_filter",
+                type: "fix",
+                title: "Fix: Filter before the hotspot",
+                prompt: "Turn on **Filter Early** to reduce the number of rows hitting the skewed join/aggregation.",
+
+                problemPattern: "Filtering before skewed operations reduces the row count in ALL partitions, including the hot one",
+
+                metricsToWatch: {
+                    before: [
+                        { metric: "skew", threshold: 0.75, comparison: ">", context: "Still severe skew" }
+                    ],
+                    after: [
+                        { metric: "skew", threshold: 0.70, comparison: "<", context: "Slight improvement from fewer rows" }
+                    ]
+                },
+
+                whyNow: "After reducing payload width (projection), now reduce payload count (filtering). Each optimization stacks to reduce the hot partition's burden.",
+
+                realWorldScenario: `Add WHERE order_date > '2024-01-01' before the GROUP BY or JOIN.
+This filters out 80% of rows upfront, so the hot partition (e.g., popular customer_id) has fewer rows to process.`,
+
                 expectedKnobDiff: { filterEarly: true },
-                rationale:
-                    "Filtering earlier reduces the amount of data in the hot partition.",
-                success: (_snap, knobs) => knobs.filterEarly,
+                rationale: "Filtering early reduces total rows across all partitions. The skewed partition still has more rows than others, but fewer than before.",
+
+                success: (_snap, knobs) => {
+                    const completed = knobs.filterEarly;
+                    return {
+                        completed,
+                        progress: completed ? 100 : 0,
+                        feedback: completed
+                            ? "Filtering enabled. Fewer rows reach the skewed operation."
+                            : "Enable 'Filter Early' to reduce row count before the hotspot."
+                    };
+                }
             },
             {
-                id: "sk_s4",
-                title: "Enable AQE",
-                prompt:
-                    "Enable **AQE**. Observe if skew% and runtime improve (simulating skew join handling).",
+                id: "sk_s4_fix_aqe",
+                type: "fix",
+                title: "Fix: Enable AQE for skew handling",
+                prompt: "Turn on **AQE**. Spark will detect skewed partitions at runtime and apply optimizations.",
+
+                problemPattern: "AQE's skew join optimization splits oversized partitions across multiple tasks dynamically",
+
+                metricsToWatch: {
+                    before: [
+                        { metric: "skew", threshold: 0.70, comparison: ">", context: "Current skew after payload reduction" }
+                    ],
+                    after: [
+                        { metric: "skew", threshold: 0.45, comparison: "<", context: "Target: ~40% skew reduction with AQE" }
+                    ]
+                },
+
+                whyNow: "After reducing payload, enable AQE. It works better on smaller data and can adaptively split the hot partition or change join strategy.",
+
+                realWorldScenario: `Set spark.sql.adaptive.enabled=true and spark.sql.adaptive.skewJoin.enabled=true.
+During execution, AQE detects partitions >3x median size and splits them, converting one slow task into multiple parallel tasks.`,
+
+                tradeoffs: "AQE adds slight planning overhead (1-2% extra time) but the skew benefits usually provide 20-40% overall speedup.",
+
                 expectedKnobDiff: { aqe: true },
-                rationale:
-                    "With AQE, Spark can apply skew handling and coalesce partitions (depending on version and query shape).",
-                success: (_snap, knobs) => knobs.aqe,
+                rationale: "AQE can apply skew join handling at runtime and coalesce small partitions, adaptively optimizing based on actual data distribution.",
+
+                success: (snap, knobs) => {
+                    const skewBefore = 0.88;
+                    const skewAfter = Math.max(...snap.stages.map(s => s.skewScore));
+                    const completed = knobs.aqe && skewAfter < 0.50;
+                    const improvement = Math.round(((skewBefore - skewAfter) / skewBefore) * 100);
+
+                    return {
+                        completed,
+                        progress: knobs.aqe
+                            ? Math.min(100, (improvement / 40) * 100)
+                            : 0,
+                        feedback: completed
+                            ? `Excellent! AQE reduced skew to ${(skewAfter * 100).toFixed(0)}% (${improvement}% improvement).`
+                            : knobs.aqe
+                                ? `AQE enabled but skew still at ${(skewAfter * 100).toFixed(0)}%. Try broadcast or repartition next.`
+                                : "Enable AQE in the Control Panel to activate runtime skew handling.",
+                        metricDeltas: knobs.aqe ? [
+                            { metric: "Skew (%)", before: skewBefore * 100, after: skewAfter * 100, target: 45 }
+                        ] : undefined
+                    };
+                }
             },
             {
-                id: "sk_s5",
-                title: "Try broadcast",
-                prompt:
-                    "Enable **Broadcast Customers**. Does it reduce the skew pain by removing a shuffle boundary?",
-                expectedKnobDiff: { broadcastCustomers: true },
-                rationale:
-                    "Broadcast can remove some shuffles, but it doesn't always fix skew if the skew is in aggregation or downstream.",
-                success: (_snap, knobs) => knobs.broadcastCustomers,
+                id: "sk_s5_fix_repartition",
+                type: "fix",
+                title: "Fix: Repartition (last resort for severe skew)",
+                prompt: "If AQE isn't enough, use **Repartition** to force even distribution. Note: adds shuffle overhead.",
+
+                problemPattern: "Repartition redistributes data evenly across partitions but adds a full shuffle stage",
+
+                metricsToWatch: {
+                    before: [
+                        { metric: "skew", threshold: 0.45, comparison: ">", context: "Remaining skew after AQE" },
+                        { metric: "shuffle", threshold: 280, comparison: ">", context: "Current shuffle volume" }
+                    ],
+                    after: [
+                        { metric: "skew", threshold: 0.25, comparison: "<", context: "Target: nearly balanced distribution" },
+                        { metric: "shuffle", threshold: 330, comparison: "<", context: "Accept +50MB shuffle overhead" }
+                    ]
+                },
+
+                whyNow: "Only use repartition when AQE and payload reduction aren't enough. It's a tradeoff: fixes skew but adds shuffle cost.",
+
+                realWorldScenario: `Use df.repartition(200, 'customer_id') before the problematic join or aggregation.
+This forces Spark to rehash and redistribute data evenly. Use when:
+- A hot key absolutely dominates (>20x other keys)
+- AQE can't split it effectively (e.g., within aggregation, not join)
+- The skew pain (slow runtime) > shuffle cost (extra I/O)`,
+
+                tradeoffs: "Repartition fixes skew (~50-70% reduction) but adds 15-20% duration overhead from the extra shuffle stage. Use only when skew pain exceeds shuffle cost.",
+
+                prerequisites: ["sk_s4_fix_aqe"],
+
+                expectedKnobDiff: { repartition: true },
+                rationale: "Repartition adds shuffle overhead but can dramatically reduce skew when AQE alone isn't sufficient, especially for aggregations where AQE skew join doesn't apply.",
+
+                success: (snap, knobs) => {
+                    const skewBefore = 0.88;
+                    const skewAfter = Math.max(...snap.stages.map(s => s.skewScore));
+                    const shuffleBefore = 350;
+                    const shuffleAfter = snap.stages.reduce((sum, s) => sum + s.shuffleReadMB + s.shuffleWriteMB, 0);
+
+                    const skewFixed = skewAfter < 0.30;
+                    const acceptableOverhead = shuffleAfter < 450;
+                    const completed = knobs.repartition && skewFixed && acceptableOverhead;
+
+                    return {
+                        completed,
+                        progress: knobs.repartition
+                            ? (skewFixed ? 60 : 20) + (acceptableOverhead ? 40 : 0)
+                            : 0,
+                        feedback: completed
+                            ? `Perfect! Skew fixed (${(skewAfter * 100).toFixed(0)}%) with acceptable shuffle overhead (+${Math.round(shuffleAfter - shuffleBefore)}MB).`
+                            : knobs.repartition
+                                ? `Repartition active: skew=${(skewAfter * 100).toFixed(0)}%, shuffle=${Math.round(shuffleAfter)}MB. Check if benefits outweigh costs.`
+                                : "Enable Repartition only if AQE didn't reduce skew enough (still >45%).",
+                        metricDeltas: knobs.repartition ? [
+                            { metric: "Skew (%)", before: skewBefore * 100, after: skewAfter * 100, target: 25 },
+                            { metric: "Shuffle (MB)", before: shuffleBefore, after: shuffleAfter, target: 400 }
+                        ] : undefined
+                    };
+                }
             },
             {
-                id: "sk_s6",
-                title: "Validate: tail reduced",
-                prompt:
-                    "Goal: skew% drops and runtime improves without relying on repartition.",
+                id: "sk_s6_validate",
+                type: "validation",
+                title: "Validate: Skew eliminated and SLA met",
+                prompt: "Review final metrics. Skew should be <30% and runtime under 35 minutes.",
+
+                problemPattern: "Final validation ensures all optimizations work together without introducing new issues",
+
+                metricsToWatch: {
+                    before: [],
+                    after: [
+                        { metric: "skew", threshold: 0.30, comparison: "<", context: "Acceptable skew level" },
+                        { metric: "duration", threshold: 35, comparison: "<=", context: "Must meet SLA" }
+                    ]
+                },
+
+                whyNow: "After applying all fixes, validate that the combined effect meets your objectives and that you haven't over-optimized (e.g., excessive shuffle from repartition).",
+
+                realWorldScenario: `Before deploying to production:
+1. Run on staging with production-sized data
+2. Check Spark UI: Tasks timeline should show even distribution (no long tail)
+3. Verify runtime meets SLA with buffer (aim for 80% of SLA limit)
+4. Monitor shuffle metrics to ensure repartition overhead is justified`,
+
                 expectedKnobDiff: {},
-                rationale:
-                    "You should see the oversized partition shrink and fewer 'spill' flags.",
-                success: (snap) =>
-                    snap.stages.reduce((m, s) => Math.max(m, s.skewScore), 0) <= 0.55,
+                rationale: "Validation confirms your optimizations are effective, efficient, and don't introduce new bottlenecks.",
+
+                success: (snap) => {
+                    const slaMinutes = 35;
+                    const runtime = snap.scorecard.runtimeMin;
+                    const skew = Math.max(...snap.stages.map(s => s.skewScore));
+
+                    const metSLA = runtime <= slaMinutes;
+                    const lowSkew = skew < 0.30;
+                    const completed = metSLA && lowSkew;
+
+                    return {
+                        completed,
+                        progress: (metSLA ? 50 : Math.min((slaMinutes / runtime) * 50, 45)) +
+                                (lowSkew ? 50 : Math.min((1 - skew) / 0.7 * 50, 45)),
+                        feedback: completed
+                            ? `Mission accomplished! Runtime: ${runtime}min (SLA: ${slaMinutes}min), Skew: ${(skew * 100).toFixed(0)}%`
+                            : `Almost there. Runtime: ${runtime}min ${metSLA ? '✓' : '✗'}, Skew: ${(skew * 100).toFixed(0)}% ${lowSkew ? '✓' : '✗'}`,
+                        metricDeltas: [
+                            { metric: "Runtime (min)", before: 147, after: runtime, target: slaMinutes },
+                            { metric: "Skew (%)", before: 88, after: skew * 100, target: 30 }
+                        ]
+                    };
+                }
             },
         ],
     },
@@ -307,6 +530,8 @@ export const missions: Record<MissionId, Mission> = {
             cacheAfterClean: false,
             aqe: true,
             dynamicPruning: false,
+            repartition: false,
+            coalesce: false,
         }),
         initialKnobs: mergeKnobs(defaultKnobs, {
             optimizeBeforeMerge: false,
@@ -316,6 +541,8 @@ export const missions: Record<MissionId, Mission> = {
             cacheAfterClean: false,
             aqe: true,
             dynamicPruning: false,
+            repartition: false,
+            coalesce: false,
         }),
         coachSteps: [
             {
@@ -389,12 +616,16 @@ export const missions: Record<MissionId, Mission> = {
             cacheAfterClean: true, // The trap!
             projectEarly: false,
             filterEarly: false,
+            repartition: false,
+            coalesce: false,
         }),
         initialKnobs: mergeKnobs(defaultKnobs, {
             aqe: false,
             cacheAfterClean: true,
             projectEarly: false,
             filterEarly: false,
+            repartition: false,
+            coalesce: false,
         }),
         coachSteps: [
             {
@@ -451,16 +682,18 @@ export const missions: Record<MissionId, Mission> = {
             "Fact table partitioned by date. Join with dimension filters. DPP helps only in certain shapes.",
         slaMinutes: 25,
         baselineKnobs: mergeKnobs(defaultKnobs, {
-            dynamicPruning: false,
-            filterEarly: false,
             projectEarly: false,
             aqe: false,
+            repartition: false,
+            coalesce: false,
         }),
         initialKnobs: mergeKnobs(defaultKnobs, {
             dynamicPruning: false,
             filterEarly: false,
             projectEarly: false,
             aqe: false,
+            repartition: false,
+            coalesce: false,
         }),
         coachSteps: [
             {
@@ -517,10 +750,14 @@ export const missions: Record<MissionId, Mission> = {
         baselineKnobs: mergeKnobs(defaultKnobs, {
             useUdf: true,
             aqe: false,
+            repartition: false,
+            coalesce: false,
         }),
         initialKnobs: mergeKnobs(defaultKnobs, {
             useUdf: true,
             aqe: false,
+            repartition: false,
+            coalesce: false,
         }),
         coachSteps: [
             {
@@ -565,10 +802,14 @@ export const missions: Record<MissionId, Mission> = {
         baselineKnobs: mergeKnobs(defaultKnobs, {
             projectEarly: false,
             filterEarly: false,
+            repartition: false,
+            coalesce: false,
         }),
         initialKnobs: mergeKnobs(defaultKnobs, {
             projectEarly: false,
             filterEarly: false,
+            repartition: false,
+            coalesce: false,
         }),
         coachSteps: [
             {
@@ -614,11 +855,15 @@ export const missions: Record<MissionId, Mission> = {
             optimizeJoinOrder: false,
             aqe: false,
             broadcastCustomers: false,
+            repartition: false,
+            coalesce: false,
         }),
         initialKnobs: mergeKnobs(defaultKnobs, {
             optimizeJoinOrder: false,
             aqe: false,
             broadcastCustomers: false,
+            repartition: false,
+            coalesce: false,
         }),
         coachSteps: [
             {

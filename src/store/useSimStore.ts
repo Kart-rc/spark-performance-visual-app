@@ -9,6 +9,7 @@ import {
 import { missions, defaultKnobs } from "@/data/missions";
 import { simulate } from "@/lib/simulation";
 import { ChatMessage, getGeminiResponse } from "@/lib/gemini";
+import { extractMetricValue } from "@/lib/metricAnalysis";
 
 interface SimState {
     missionId: MissionId | null;
@@ -19,6 +20,16 @@ interface SimState {
     currentStep: number;
     learningMode: boolean;
     setCurrentStep: (idx: number) => void;
+
+    // Baseline metrics for comparison
+    baselineMetrics: {
+        shuffle: number;
+        spill: number;
+        duration: number;
+        skew: number;
+        fileImpact: number;
+        gc: number;
+    } | null;
 
     // Gemini State
     isGeminiOpen: boolean; // Keep for now if we want to toggle visibility, though it's always visible in sidebar
@@ -50,6 +61,7 @@ export const useSimStore = create<SimState>((set, get) => ({
     missionId: null,
     knobs: defaultKnobs,
     snapshot: simulate("etl_joins", defaultKnobs),
+    baselineMetrics: null,
 
     guideMode: false,
     learningMode: false,
@@ -69,13 +81,26 @@ export const useSimStore = create<SimState>((set, get) => ({
 
     setMission: (id) => {
         if (!id) {
-            set({ missionId: null });
+            set({ missionId: null, baselineMetrics: null });
             return;
         }
+
+        // Capture baseline metrics
+        const baseline = simulate(id, missions[id].baselineKnobs);
+        const baselineMetrics = {
+            shuffle: extractMetricValue(baseline, "shuffle"),
+            spill: extractMetricValue(baseline, "spill"),
+            duration: baseline.scorecard.runtimeMin,
+            skew: extractMetricValue(baseline, "skew"),
+            fileImpact: baseline.scorecard.fileImpactPct ?? 0,
+            gc: extractMetricValue(baseline, "gc"),
+        };
+
         set({
             missionId: id,
             knobs: missions[id].initialKnobs,
             snapshot: simulate(id, missions[id].initialKnobs),
+            baselineMetrics,
             guideMode: false,
             learningMode: false,
             currentStep: 0,

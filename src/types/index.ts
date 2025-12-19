@@ -37,6 +37,10 @@ export type Knobs = {
 
     // Mission 9: Join Order
     optimizeJoinOrder: boolean;
+
+    // Partitioning (Shared)
+    repartition: boolean;
+    coalesce: boolean;
 };
 
 export type StageMetric = {
@@ -80,13 +84,47 @@ export type Snapshot = {
     animation: AnimationModel;
 };
 
+export type StepType = "diagnostic" | "fix" | "validation";
+
+export type MetricTarget = {
+    metric: "shuffle" | "spill" | "skew" | "gc" | "duration" | "fileImpact" | "taskCount";
+    threshold: number;
+    comparison: ">" | "<" | ">=" | "<=";
+    context: string;
+};
+
+export type StepValidationResult = {
+    completed: boolean;
+    progress: number; // 0-100
+    feedback: string;
+    metricDeltas?: {
+        metric: string;
+        before: number;
+        after: number;
+        target: number;
+    }[];
+};
+
 export type CoachStep = {
     id: string;
+    type?: StepType; // Optional for backward compatibility
     title: string;
     prompt: string;
+
+    // Enhanced diagnostic fields
+    problemPattern?: string;
+    metricsToWatch?: {
+        before: MetricTarget[];
+        after: MetricTarget[];
+    };
+    whyNow?: string;
+    realWorldScenario?: string;
+    prerequisites?: string[];
+    tradeoffs?: string;
+
     expectedKnobDiff: Partial<Knobs>;
     rationale: string;
-    success: (snap: Snapshot, knobs: Knobs) => boolean;
+    success: (snap: Snapshot, knobs: Knobs) => boolean | StepValidationResult; // Support both formats
 };
 
 export type Mission = {

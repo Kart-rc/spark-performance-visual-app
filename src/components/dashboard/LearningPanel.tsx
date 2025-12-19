@@ -1,4 +1,4 @@
-import { BookOpen, AlertCircle, CheckCircle2 } from "lucide-react";
+import { BookOpen, AlertCircle, CheckCircle2, Target, Wrench, CheckSquare } from "lucide-react";
 import { MissionId } from "@/types";
 import { useSimStore } from "@/store/useSimStore";
 import { missions } from "@/data/missions";
@@ -7,6 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { wrapSuccessFunction } from "@/lib/stepCompatibility";
 
 export function LearningPanel({ missionId }: { missionId: MissionId }) {
     const learningMode = useSimStore((s) => s.learningMode);
@@ -20,7 +21,8 @@ export function LearningPanel({ missionId }: { missionId: MissionId }) {
 
     const mission = missions[missionId];
     const steps = mission.coachSteps;
-    const completed = steps.filter((step) => step.success(snap, knobs)).length;
+    const validations = steps.map((step) => wrapSuccessFunction(step.success)(snap, knobs));
+    const completed = validations.filter((v) => v.completed).length;
     const progressPct = Math.round((completed / steps.length) * 100);
 
     return (
@@ -61,8 +63,15 @@ export function LearningPanel({ missionId }: { missionId: MissionId }) {
                 <ScrollArea className="h-[500px] p-4">
                     <div className="space-y-6">
                         {steps.map((step, idx) => {
-                            const isDone = step.success(snap, knobs);
+                            const validation = validations[idx];
+                            const isDone = validation.completed;
                             const isActive = idx === currentStep;
+
+                            // Icon based on step type (default to fix if not specified)
+                            const stepType = step.type || "fix";
+                            const StepIcon = stepType === "diagnostic" ? Target :
+                                           stepType === "fix" ? Wrench : CheckSquare;
+
                             return (
                                 <div
                                     key={step.id}
@@ -88,12 +97,67 @@ export function LearningPanel({ missionId }: { missionId: MissionId }) {
                                         {isDone ? <CheckCircle2 className="w-4 h-4" /> : idx + 1}
                                     </div>
                                     <div className="space-y-2">
+                                        {/* Step type badge */}
+                                        <div className="flex items-center gap-2">
+                                            <Badge variant="outline" className="text-[10px]">
+                                                <StepIcon className="w-3 h-3 mr-1" />
+                                                {stepType}
+                                            </Badge>
+                                        </div>
+
                                         <h3 className="font-medium text-sm text-foreground">
                                             {step.title}
                                         </h3>
                                         <p className="text-sm text-muted-foreground bg-white dark:bg-slate-900 p-3 rounded-lg border">
                                             {step.prompt}
                                         </p>
+
+                                        {/* Progress bar */}
+                                        <div className="mt-2">
+                                            <div className="flex justify-between text-xs mb-1">
+                                                <span className="text-muted-foreground">Progress</span>
+                                                <span className="font-medium">{validation.progress}%</span>
+                                            </div>
+                                            <div className="relative h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                                                <div
+                                                    className="absolute left-0 top-0 h-full bg-indigo-500 transition-all"
+                                                    style={{ width: `${validation.progress}%` }}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Feedback */}
+                                        <div className="mt-2 p-2 rounded bg-slate-100 dark:bg-slate-800 text-xs">
+                                            {validation.feedback}
+                                        </div>
+
+                                        {/* Problem pattern for diagnostic/fix steps */}
+                                        {step.problemPattern && (
+                                            <div className="mt-2 p-2 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs">
+                                                <strong className="text-amber-900 dark:text-amber-100">Pattern:</strong>{" "}
+                                                <span className="text-amber-800 dark:text-amber-300 whitespace-pre-line">{step.problemPattern}</span>
+                                            </div>
+                                        )}
+
+                                        {/* Why now explanation */}
+                                        {step.whyNow && (
+                                            <div className="mt-2 p-2 rounded bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-xs">
+                                                <strong className="text-blue-900 dark:text-blue-100">Why this step now:</strong>{" "}
+                                                <span className="text-blue-800 dark:text-blue-300">{step.whyNow}</span>
+                                            </div>
+                                        )}
+
+                                        {/* Real-world scenario (collapsible) */}
+                                        {step.realWorldScenario && (
+                                            <details className="mt-2 text-xs">
+                                                <summary className="cursor-pointer font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100">
+                                                    📚 Real-world context
+                                                </summary>
+                                                <p className="mt-2 text-muted-foreground whitespace-pre-line p-2 bg-slate-50 dark:bg-slate-900/50 rounded border">
+                                                    {step.realWorldScenario}
+                                                </p>
+                                            </details>
+                                        )}
 
                                         <div className="flex gap-2 items-start mt-2 text-xs text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/50 p-3 rounded-lg">
                                             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />

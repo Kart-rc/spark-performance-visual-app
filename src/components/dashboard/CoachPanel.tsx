@@ -1,4 +1,4 @@
-import { CheckCircle2, Info } from "lucide-react";
+import { CheckCircle2, Info, AlertTriangle } from "lucide-react";
 import { MissionId, Snapshot } from "@/types";
 import { useSimStore } from "@/store/useSimStore";
 import { missions } from "@/data/missions";
@@ -6,6 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { DiagnosticPanel } from "./DiagnosticPanel";
+import { MetricComparisonPanel } from "./MetricComparisonPanel";
+import { TradeoffPanel } from "./TradeoffPanel";
+import { wrapSuccessFunction } from "@/lib/stepCompatibility";
 
 export function CoachPanel({ snap }: { snap: Snapshot }) {
     const missionId = useSimStore((s) => s.missionId) as MissionId;
@@ -19,8 +23,9 @@ export function CoachPanel({ snap }: { snap: Snapshot }) {
 
     const steps = missions[missionId].coachSteps;
     const step = steps[coachIndex];
-    const done = step.success(snap, knobs);
-    const allDone = steps.every((s) => s.success(snap, knobs));
+    const validation = wrapSuccessFunction(step.success)(snap, knobs);
+    const done = validation.completed;
+    const allDone = steps.every((s) => wrapSuccessFunction(s.success)(snap, knobs).completed);
 
     if (!learningMode) return null;
 
@@ -71,6 +76,51 @@ export function CoachPanel({ snap }: { snap: Snapshot }) {
                         </div>
                     </div>
                 </div>
+
+                {/* Progress and feedback */}
+                <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                        <span className="text-muted-foreground">Progress</span>
+                        <span className="font-medium">{validation.progress}%</span>
+                    </div>
+                    <div className="relative h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                        <div
+                            className="absolute left-0 top-0 h-full bg-indigo-500 transition-all"
+                            style={{ width: `${validation.progress}%` }}
+                        />
+                    </div>
+                    <div className="p-2 rounded bg-slate-100 dark:bg-slate-800 text-xs">
+                        {validation.feedback}
+                    </div>
+                </div>
+
+                {/* Show diagnostic panel if step is diagnostic */}
+                {step.type === "diagnostic" && step.type && (
+                    <DiagnosticPanel step={step} snap={snap} />
+                )}
+
+                {/* Show metric comparisons if available */}
+                <MetricComparisonPanel validation={validation} />
+
+                {/* Show tradeoffs panel if available */}
+                <TradeoffPanel step={step} />
+
+                {/* Prerequisites warning */}
+                {step.prerequisites && step.prerequisites.length > 0 && (
+                    <div className="p-3 rounded-lg border border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-950/30">
+                        <div className="flex items-start gap-2">
+                            <AlertTriangle className="w-4 h-4 text-yellow-700 dark:text-yellow-400 shrink-0 mt-0.5" />
+                            <div>
+                                <div className="text-xs font-semibold text-yellow-900 dark:text-yellow-100">
+                                    Prerequisites
+                                </div>
+                                <p className="text-xs text-yellow-800 dark:text-yellow-300 mt-1">
+                                    Complete steps {step.prerequisites.join(", ")} first for best results
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 <div className="p-3 rounded-2xl border text-xs text-muted-foreground">
                     <div className="font-semibold text-foreground mb-1">

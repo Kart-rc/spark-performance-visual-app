@@ -48,6 +48,18 @@ export function KnobPanel({ missionId }: { missionId: MissionId }) {
                         onChange={(v) => setKnob("dynamicPruning", v)}
                         hint="Reduce scans when predicates align"
                     />
+                    <ToggleRow
+                        label="Repartition"
+                        value={knobs.repartition}
+                        onChange={(v) => setKnob("repartition", v)}
+                        hint="Force a shuffle to fix severe skew"
+                    />
+                    <ToggleRow
+                        label="Coalesce"
+                        value={knobs.coalesce}
+                        onChange={(v) => setKnob("coalesce", v)}
+                        hint="Reduce partitions without a full shuffle"
+                    />
                 </Section>
 
                 {isJoinMission && (
@@ -165,9 +177,8 @@ export function KnobPanel({ missionId }: { missionId: MissionId }) {
                 )}
 
                 <Separator />
-                <p className="text-xs text-muted-foreground">
-                    Repartition/coalesce knobs intentionally omitted. This simulator
-                    teaches levers you can still use.
+                <p className="text-xs text-muted-foreground italic">
+                    All major levers are now available. Watch how partition count and shuffle volume impact your SLA.
                 </p>
             </CardContent>
         </Card>

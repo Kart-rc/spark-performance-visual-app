@@ -7,6 +7,7 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { SUGGESTED_QUESTIONS } from "@/lib/gemini";
 import { missions } from "@/data/missions";
 import { cn } from "@/lib/utils";
+import { wrapSuccessFunction } from "@/lib/stepCompatibility";
 
 export function GeminiAssistant() {
     const history = useSimStore((s) => s.chatHistory);
@@ -44,8 +45,8 @@ export function GeminiAssistant() {
     // Guide Logic
     const steps = missionId ? missions[missionId]?.coachSteps || [] : [];
     const step = steps[currentStep];
-    const isStepDone = step ? step.success(snap, knobs) : false;
-    const isMissionComplete = steps.length > 0 && steps.every((s) => s.success(snap, knobs));
+    const isStepDone = step ? wrapSuccessFunction(step.success)(snap, knobs).completed : false;
+    const isMissionComplete = steps.length > 0 && steps.every((s) => wrapSuccessFunction(s.success)(snap, knobs).completed);
 
     return (
         <Card className="w-full h-[600px] flex flex-col border-indigo-200 dark:border-indigo-800 shadow-sm">
