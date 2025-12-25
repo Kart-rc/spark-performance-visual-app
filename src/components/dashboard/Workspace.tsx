@@ -28,6 +28,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { GeminiAssistant } from "./GeminiAssistant";
+import { ObservabilityPanel } from "./ObservabilityPanel";
 
 export function Workspace() {
     const missionId = useSimStore((s) => s.missionId);
@@ -123,6 +124,8 @@ export function Workspace() {
                             <PartitionOrFileAnim snap={snap} missionId={missionId} />
                             <PlanDiff snap={snap} baselineSnap={baselineSnap!} />
                         </div>
+
+                        <ObservabilityPanel />
 
                         <Card className="rounded-2xl">
                             <CardHeader className="pb-2">

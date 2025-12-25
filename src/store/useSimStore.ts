@@ -10,6 +10,8 @@ import { missions, defaultKnobs } from "@/data/missions";
 import { simulate } from "@/lib/simulation";
 import { ChatMessage, getGeminiResponse } from "@/lib/gemini";
 import { extractMetricValue } from "@/lib/metricAnalysis";
+import { LineageGraph } from "@/types/telemetry";
+import { buildLineageGraph } from "@/lib/lineage";
 
 interface SimState {
     missionId: MissionId | null;
@@ -30,6 +32,9 @@ interface SimState {
         fileImpact: number;
         gc: number;
     } | null;
+
+    // Lineage tracking
+    lineageGraph: LineageGraph | null;
 
     // Gemini State
     isGeminiOpen: boolean; // Keep for now if we want to toggle visibility, though it's always visible in sidebar
@@ -62,6 +67,7 @@ export const useSimStore = create<SimState>((set, get) => ({
     knobs: defaultKnobs,
     snapshot: simulate("etl_joins", defaultKnobs),
     baselineMetrics: null,
+    lineageGraph: null,
 
     guideMode: false,
     learningMode: false,
@@ -81,7 +87,7 @@ export const useSimStore = create<SimState>((set, get) => ({
 
     setMission: (id) => {
         if (!id) {
-            set({ missionId: null, baselineMetrics: null });
+            set({ missionId: null, baselineMetrics: null, lineageGraph: null });
             return;
         }
 
@@ -96,10 +102,14 @@ export const useSimStore = create<SimState>((set, get) => ({
             gc: extractMetricValue(baseline, "gc"),
         };
 
+        const initialSnapshot = simulate(id, missions[id].initialKnobs);
+        const lineageGraph = buildLineageGraph(id, initialSnapshot, missions[id].initialKnobs);
+
         set({
             missionId: id,
             knobs: missions[id].initialKnobs,
-            snapshot: simulate(id, missions[id].initialKnobs),
+            snapshot: initialSnapshot,
+            lineageGraph,
             baselineMetrics,
             guideMode: false,
             learningMode: false,
@@ -111,7 +121,9 @@ export const useSimStore = create<SimState>((set, get) => ({
         const { missionId, knobs } = get();
         if (!missionId) return;
         const next = { ...knobs, [key]: value };
-        set({ knobs: next, snapshot: simulate(missionId, next) });
+        const snapshot = simulate(missionId, next);
+        const lineageGraph = buildLineageGraph(missionId, snapshot, next);
+        set({ knobs: next, snapshot, lineageGraph });
     },
 
     startGuide: () => {
@@ -147,9 +159,12 @@ export const useSimStore = create<SimState>((set, get) => ({
         if (!step) return;
 
         const newKnobs = { ...knobs, ...step.expectedKnobDiff };
+        const snapshot = simulate(missionId, newKnobs);
+        const lineageGraph = buildLineageGraph(missionId, snapshot, newKnobs);
         set({
             knobs: newKnobs,
-            snapshot: simulate(missionId, newKnobs),
+            snapshot,
+            lineageGraph,
         });
     },
 
@@ -160,9 +175,12 @@ export const useSimStore = create<SimState>((set, get) => ({
         if (!step) return;
 
         const newKnobs = { ...knobs, ...step.expectedKnobDiff };
+        const snapshot = simulate(missionId, newKnobs);
+        const lineageGraph = buildLineageGraph(missionId, snapshot, newKnobs);
         set({
             knobs: newKnobs,
-            snapshot: simulate(missionId, newKnobs),
+            snapshot,
+            lineageGraph,
             currentStep: idx,
         });
     },
@@ -192,9 +210,12 @@ export const useSimStore = create<SimState>((set, get) => ({
     reset: () => {
         const { missionId } = get();
         if (!missionId) return;
+        const snapshot = simulate(missionId, missions[missionId].initialKnobs);
+        const lineageGraph = buildLineageGraph(missionId, snapshot, missions[missionId].initialKnobs);
         set({
             knobs: missions[missionId].initialKnobs,
-            snapshot: simulate(missionId, missions[missionId].initialKnobs),
+            snapshot,
+            lineageGraph,
             currentStep: 0,
         });
     },
