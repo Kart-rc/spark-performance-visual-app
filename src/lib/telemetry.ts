@@ -77,7 +77,7 @@ const provider = new WebTracerProvider({
 
 provider.register();
 
-export const tracer = trace.getTracer("spark-simulation", "1.0.0");
+export const tracer = trace.getTracer("spark-performance-react-app", "1.0.0");
 
 // Helper to get all traces grouped by traceId
 export function getTraces(): OtelTrace[] {

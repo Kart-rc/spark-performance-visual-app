@@ -19,7 +19,7 @@ export function ObservabilityPanel() {
                 <TabsList className="mb-4">
                     <TabsTrigger value="lineage" className="flex items-center gap-2">
                         <GitBranch className="h-4 w-4" />
-                        Data Lineage
+                        App Lineage
                     </TabsTrigger>
                     <TabsTrigger value="traces" className="flex items-center gap-2">
                         <Activity className="h-4 w-4" />
