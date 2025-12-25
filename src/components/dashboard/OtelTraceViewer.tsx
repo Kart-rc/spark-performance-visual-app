@@ -5,11 +5,19 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Activity, Clock, Zap, Trash2, ChevronDown, ChevronRight } from "lucide-react";
+import {
+    Activity,
+    Clock,
+    Zap,
+    Trash2,
+    ChevronDown,
+    ChevronRight,
+    Layers,
+} from "lucide-react";
 
 export function OtelTraceViewer() {
     const [traces, setTraces] = useState<OtelTrace[]>([]);
-    const [selectedTrace, setSelectedTrace] = useState<OtelTrace | null>(null);
+    const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
     const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
 
     useEffect(() => {
@@ -23,7 +31,7 @@ export function OtelTraceViewer() {
     const handleClearTraces = () => {
         clearTraces();
         setTraces([]);
-        setSelectedTrace(null);
+        setSelectedTraceId(null);
     };
 
     const toggleSpan = (spanId: string) => {
@@ -53,6 +61,68 @@ export function OtelTraceViewer() {
             default:
                 return "bg-gray-500/20 text-gray-300 border-gray-500/50";
         }
+    };
+
+    const getStatusFill = (status: string) => {
+        switch (status) {
+            case "ok":
+                return "bg-emerald-500/70";
+            case "error":
+                return "bg-red-500/80";
+            default:
+                return "bg-slate-400/70";
+        }
+    };
+
+    const groupedTraces = traces.reduce<Record<string, OtelTrace[]>>((acc, trace) => {
+        const key = trace.rootSpan?.name || "Unknown flow";
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(trace);
+        return acc;
+    }, {});
+
+    const selectedTrace =
+        traces.find((trace) => trace.traceId === selectedTraceId) || traces[0] || null;
+
+    const renderTraceTimeline = (trace: OtelTrace) => {
+        const traceStart = trace.startTime;
+        const traceWidth = trace.duration || 1;
+
+        return (
+            <div className="mt-2">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+                    <span>Trace timeline</span>
+                    <span className="font-mono text-foreground">{formatDuration(trace.duration)}</span>
+                </div>
+                <div className="relative h-14 bg-muted/40 rounded overflow-hidden border border-border/60">
+                    {trace.spans
+                        .sort((a, b) => a.startTime - b.startTime)
+                        .map((span) => {
+                            const spanStart = span.startTime - traceStart;
+                            const leftPct = (spanStart / traceWidth) * 100;
+                            const widthPct = Math.max((span.duration / traceWidth) * 100, 0.5);
+                            return (
+                                <div key={span.spanId} className="absolute inset-y-1">
+                                    <div
+                                        className={`absolute h-4 rounded ${getStatusFill(span.status)}`}
+                                        style={{
+                                            left: `${leftPct}%`,
+                                            width: `${widthPct}%`,
+                                        }}
+                                        title={`${span.name} • ${formatDuration(span.duration)}`}
+                                    />
+                                    <div
+                                        className="absolute top-5 text-[10px] font-mono text-foreground truncate max-w-[140px]"
+                                        style={{ left: `${leftPct}%` }}
+                                    >
+                                        {span.name}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                </div>
+            </div>
+        );
     };
 
     const renderSpanTree = (span: OtelSpan, trace: OtelTrace, level: number = 0) => {
@@ -178,37 +248,58 @@ export function OtelTraceViewer() {
             ) : (
                 <div className="flex-1 flex gap-4 min-h-0">
                     {/* Trace list */}
-                    <div className="w-64 flex-shrink-0">
+                    <div className="w-72 flex-shrink-0">
                         <ScrollArea className="h-full">
-                            {traces.map((trace) => (
-                                <Card
-                                    key={trace.traceId}
-                                    className={`p-3 mb-2 cursor-pointer transition-colors ${
-                                        selectedTrace?.traceId === trace.traceId
-                                            ? "border-primary bg-muted/50"
-                                            : "hover:bg-muted/30"
-                                    }`}
-                                    onClick={() => setSelectedTrace(trace)}
-                                >
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <Clock className="h-4 w-4 text-muted-foreground" />
-                                        <span className="text-xs text-muted-foreground">
-                                            {new Date(trace.startTime).toLocaleTimeString()}
-                                        </span>
+                            {Object.entries(groupedTraces)
+                                .sort((a, b) => b[1].length - a[1].length)
+                                .map(([name, grouped]) => (
+                                    <div key={name} className="mb-3">
+                                        <div className="flex items-center gap-2 mb-2 text-xs uppercase tracking-wide text-muted-foreground">
+                                            <Layers className="h-3 w-3" />
+                                            <span>{name}</span>
+                                            <Badge variant="secondary" className="ml-auto">
+                                                {grouped.length} traces
+                                            </Badge>
+                                        </div>
+                                        {grouped
+                                            .sort((a, b) => b.startTime - a.startTime)
+                                            .map((trace) => (
+                                                <Card
+                                                    key={trace.traceId}
+                                                    className={`p-3 mb-2 cursor-pointer transition-colors ${
+                                                        selectedTrace?.traceId === trace.traceId
+                                                            ? "border-primary bg-muted/50"
+                                                            : "hover:bg-muted/30"
+                                                    }`}
+                                                    onClick={() => setSelectedTraceId(trace.traceId)}
+                                                >
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <Clock className="h-4 w-4 text-muted-foreground" />
+                                                        <span className="text-xs text-muted-foreground">
+                                                            {new Date(trace.startTime).toLocaleTimeString()}
+                                                        </span>
+                                                        <Badge
+                                                            variant="outline"
+                                                            className={getStatusColor(trace.rootSpan.status)}
+                                                        >
+                                                            {trace.rootSpan.status}
+                                                        </Badge>
+                                                    </div>
+                                                    <div className="text-sm font-medium truncate mb-1">
+                                                        {trace.rootSpan.name}
+                                                    </div>
+                                                    <div className="flex items-center justify-between text-xs">
+                                                        <span className="text-muted-foreground">
+                                                            {trace.spans.length} spans
+                                                        </span>
+                                                        <span className="font-mono">
+                                                            {formatDuration(trace.duration)}
+                                                        </span>
+                                                    </div>
+                                                </Card>
+                                            ))}
                                     </div>
-                                    <div className="text-sm font-medium truncate mb-1">
-                                        {trace.rootSpan.name}
-                                    </div>
-                                    <div className="flex items-center justify-between text-xs">
-                                        <span className="text-muted-foreground">
-                                            {trace.spans.length} spans
-                                        </span>
-                                        <span className="font-mono">
-                                            {formatDuration(trace.duration)}
-                                        </span>
-                                    </div>
-                                </Card>
-                            ))}
+                                ))}
                         </ScrollArea>
                     </div>
 
@@ -216,8 +307,8 @@ export function OtelTraceViewer() {
                     <div className="flex-1 min-w-0">
                         {selectedTrace ? (
                             <ScrollArea className="h-full">
-                                <div className="space-y-2">
-                                    <div className="bg-muted/50 p-3 rounded">
+                                <div className="space-y-3">
+                                    <div className="bg-muted/50 p-3 rounded space-y-2">
                                         <div className="grid grid-cols-2 gap-2 text-xs">
                                             <div>
                                                 <span className="text-muted-foreground">Trace ID:</span>
@@ -232,6 +323,27 @@ export function OtelTraceViewer() {
                                                 </div>
                                             </div>
                                         </div>
+                                        <div className="grid grid-cols-3 gap-2 text-xs">
+                                            <div className="bg-background/80 p-2 rounded border border-border/60">
+                                                <div className="text-muted-foreground">Spans</div>
+                                                <div className="font-mono text-sm font-semibold">
+                                                    {selectedTrace.spans.length}
+                                                </div>
+                                            </div>
+                                            <div className="bg-background/80 p-2 rounded border border-border/60">
+                                                <div className="text-muted-foreground">Root span</div>
+                                                <div className="font-mono text-[11px] truncate">
+                                                    {selectedTrace.rootSpan.name}
+                                                </div>
+                                            </div>
+                                            <div className="bg-background/80 p-2 rounded border border-border/60">
+                                                <div className="text-muted-foreground">Start</div>
+                                                <div className="font-mono text-[11px] truncate">
+                                                    {new Date(selectedTrace.startTime).toLocaleTimeString()}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {renderTraceTimeline(selectedTrace)}
                                     </div>
 
                                     {/* Render root spans and their children */}

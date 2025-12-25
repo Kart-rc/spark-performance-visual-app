@@ -46,6 +46,91 @@ export const resetUiObservability = () => {
     uiInteractions.length = 0;
 };
 
+const buildStaticScaLineage = (
+    missionId: MissionId
+): { nodes: LineageGraph["nodes"]; edges: LineageEdge[]; totalDurationMs: number } => {
+    const prefix = `sca-${missionId}`;
+    const nodes: LineageGraph["nodes"] = [
+        {
+            id: `${prefix}-entry`,
+            type: "source",
+            name: "App event captured",
+            operation: "ui_instrumentation",
+            metrics: { durationMs: 12 },
+            knobsAffecting: [],
+            attributes: {
+                description: "UI interactions are wrapped with runUiAction for traceability.",
+                traceId: "static-sca",
+                staticDoc: true,
+            },
+        },
+        {
+            id: `${prefix}-state`,
+            type: "transformation",
+            name: "Update Zustand store",
+            operation: "state_sync",
+            metrics: { durationMs: 18 },
+            knobsAffecting: [],
+            attributes: {
+                description: "Actions update mission state and tuning knobs in the store.",
+                traceId: "static-sca",
+                staticDoc: true,
+            },
+        },
+        {
+            id: `${prefix}-simulate`,
+            type: "aggregate",
+            name: "Simulate Spark plan",
+            operation: "simulation",
+            metrics: { durationMs: 24 },
+            knobsAffecting: [],
+            attributes: {
+                description: "Simulation generates plan, metrics, and scorecard snapshots.",
+                traceId: "static-sca",
+                staticDoc: true,
+            },
+        },
+        {
+            id: `${prefix}-lineage`,
+            type: "project",
+            name: "Document SCA code flow",
+            operation: "lineage_build",
+            metrics: { durationMs: 16 },
+            knobsAffecting: [],
+            attributes: {
+                description: "Lineage graph links UI actions to telemetry traces for the mission.",
+                traceId: "static-sca",
+                staticDoc: true,
+            },
+        },
+        {
+            id: `${prefix}-telemetry`,
+            type: "sink",
+            name: "Emit OpenTelemetry spans",
+            operation: "telemetry",
+            metrics: { durationMs: 10 },
+            knobsAffecting: [],
+            attributes: {
+                description: "Actions are exported to the in-memory span buffer for the trace viewer.",
+                traceId: "static-sca",
+                staticDoc: true,
+            },
+        },
+    ];
+
+    const edges: LineageEdge[] = nodes.slice(0, -1).map((node, index) => ({
+        id: `${node.id}-${nodes[index + 1].id}`,
+        source: node.id,
+        target: nodes[index + 1].id,
+        type: "data_flow",
+        label: "Static SCA flow",
+    }));
+
+    const totalDurationMs = nodes.reduce((acc, node) => acc + (node.metrics.durationMs ?? 0), 0);
+
+    return { nodes, edges, totalDurationMs };
+};
+
 export const runUiAction = <T>(
     name: string,
     action: UiActionType,
@@ -140,15 +225,19 @@ export const runUiActionAsync = async <T>(
 export const buildUiLineageGraph = (missionId: MissionId | null): LineageGraph | null => {
     if (!missionId) return null;
 
+    const {
+        nodes: staticNodes,
+        edges: staticEdges,
+        totalDurationMs: staticDurationMs,
+    } = buildStaticScaLineage(missionId);
+
     const relevantInteractions = uiInteractions.filter(
         (interaction) => interaction.missionId === missionId
     );
 
-    if (relevantInteractions.length === 0) return null;
-
     const sorted = relevantInteractions.sort((a, b) => a.startedAt - b.startedAt);
 
-    const nodes = sorted.map((interaction, index) => ({
+    const interactionNodes = sorted.map((interaction, index) => ({
         id: interaction.id,
         type: getNodeType(interaction.action),
         name: interaction.name,
@@ -166,12 +255,12 @@ export const buildUiLineageGraph = (missionId: MissionId | null): LineageGraph |
         },
     }));
 
-    const edges: LineageEdge[] = [];
+    const interactionEdges: LineageEdge[] = [];
 
     for (let i = 0; i < sorted.length - 1; i++) {
         const current = sorted[i];
         const next = sorted[i + 1];
-        edges.push({
+        interactionEdges.push({
             id: `${current.id}-${next.id}`,
             source: current.id,
             target: next.id,
@@ -179,12 +268,31 @@ export const buildUiLineageGraph = (missionId: MissionId | null): LineageGraph |
         });
     }
 
-    const criticalPath = [...sorted]
-        .sort((a, b) => b.durationMs - a.durationMs)
-        .slice(0, Math.min(5, sorted.length))
-        .map((interaction) => interaction.id);
+    const nodes = [...staticNodes, ...interactionNodes];
 
-    const totalDurationMs = sorted.reduce((acc, interaction) => acc + interaction.durationMs, 0);
+    const edges: LineageEdge[] = [
+        ...staticEdges,
+        ...(interactionNodes.length > 0
+            ? [
+                  {
+                      id: `${staticNodes[staticNodes.length - 1].id}-${interactionNodes[0].id}`,
+                      source: staticNodes[staticNodes.length - 1].id,
+                      target: interactionNodes[0].id,
+                      type: "data_flow",
+                      label: "User action lineage",
+                  },
+                  ...interactionEdges,
+              ]
+            : []),
+    ];
+
+    const criticalPath = [...nodes]
+        .sort((a, b) => (b.metrics.durationMs ?? 0) - (a.metrics.durationMs ?? 0))
+        .slice(0, Math.min(5, nodes.length))
+        .map((node) => node.id);
+
+    const interactionDuration = sorted.reduce((acc, interaction) => acc + interaction.durationMs, 0);
+    const totalDurationMs = staticDurationMs + interactionDuration;
 
     return {
         missionId,
