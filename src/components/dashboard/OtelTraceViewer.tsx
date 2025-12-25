@@ -172,7 +172,7 @@ export function OtelTraceViewer() {
                     <div className="text-center">
                         <Activity className="h-12 w-12 mx-auto mb-2 opacity-50" />
                         <p>No traces captured yet</p>
-                        <p className="text-xs">Run a simulation to generate traces</p>
+                        <p className="text-xs">Interact with the React app to generate traces</p>
                     </div>
                 </div>
             ) : (

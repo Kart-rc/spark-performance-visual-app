@@ -11,7 +11,12 @@ import { simulate } from "@/lib/simulation";
 import { ChatMessage, getGeminiResponse } from "@/lib/gemini";
 import { extractMetricValue } from "@/lib/metricAnalysis";
 import { LineageGraph } from "@/types/telemetry";
-import { buildLineageGraph } from "@/lib/lineage";
+import {
+    buildUiLineageGraph,
+    resetUiObservability,
+    runUiAction,
+    runUiActionAsync,
+} from "@/lib/uiObservability";
 
 interface SimState {
     missionId: MissionId | null;
@@ -87,8 +92,14 @@ export const useSimStore = create<SimState>((set, get) => ({
 
     setMission: (id) => {
         if (!id) {
+            resetUiObservability();
             set({ missionId: null, baselineMetrics: null, lineageGraph: null });
             return;
+        }
+
+        const currentMission = get().missionId;
+        if (currentMission && currentMission !== id) {
+            resetUiObservability();
         }
 
         // Capture baseline metrics
@@ -102,45 +113,83 @@ export const useSimStore = create<SimState>((set, get) => ({
             gc: extractMetricValue(baseline, "gc"),
         };
 
-        const initialSnapshot = simulate(id, missions[id].initialKnobs);
-        const lineageGraph = buildLineageGraph(id, initialSnapshot, missions[id].initialKnobs);
-
-        set({
-            missionId: id,
-            knobs: missions[id].initialKnobs,
-            snapshot: initialSnapshot,
-            lineageGraph,
-            baselineMetrics,
-            guideMode: false,
-            learningMode: false,
-            currentStep: 0,
-            chatHistory: [],
-        });
+        runUiAction(
+            "Select mission",
+            "mission_select",
+            id,
+            { missionId: id },
+            () => {
+                const initialSnapshot = simulate(id, missions[id].initialKnobs);
+                set({
+                    missionId: id,
+                    knobs: missions[id].initialKnobs,
+                    snapshot: initialSnapshot,
+                    baselineMetrics,
+                    guideMode: false,
+                    learningMode: false,
+                    currentStep: 0,
+                    chatHistory: [],
+                });
+            }
+        );
+        set({ lineageGraph: buildUiLineageGraph(id) });
     },
     setKnob: (key, value) => {
         const { missionId, knobs } = get();
         if (!missionId) return;
-        const next = { ...knobs, [key]: value };
-        const snapshot = simulate(missionId, next);
-        const lineageGraph = buildLineageGraph(missionId, snapshot, next);
-        set({ knobs: next, snapshot, lineageGraph });
+
+        runUiAction(
+            "Update tuning knob",
+            "knob_change",
+            missionId,
+            { knob: key, value },
+            () => {
+                const next = { ...knobs, [key]: value };
+                const snapshot = simulate(missionId, next);
+                set({
+                    knobs: next,
+                    snapshot,
+                });
+            }
+        );
+        set({ lineageGraph: buildUiLineageGraph(missionId) });
     },
 
     startGuide: () => {
         const { missionId } = get();
         if (!missionId) return;
-        set({
-            guideMode: true,
-            learningMode: true,
-            currentStep: 0,
-            chatHistory: [{
-                role: "model",
-                text: "Welcome to the interactive guide! I'll walk you through optimizing this mission step-by-step. Ready to start?"
-            }]
-        });
+        runUiAction(
+            "Start coach mode",
+            "learning_toggle",
+            missionId,
+            { missionId },
+            () => {
+                set({
+                    guideMode: true,
+                    learningMode: true,
+                    currentStep: 0,
+                    chatHistory: [{
+                        role: "model",
+                        text: "Welcome to the interactive guide! I'll walk you through optimizing this mission step-by-step. Ready to start?"
+                    }]
+                });
+            }
+        );
+        set({ lineageGraph: buildUiLineageGraph(missionId) });
     },
 
-    toggleLearningMode: () => set((s) => ({ learningMode: !s.learningMode })),
+    toggleLearningMode: () => {
+        const missionId = get().missionId;
+        if (!missionId) return;
+        runUiAction(
+            "Toggle learning mode",
+            "learning_toggle",
+            missionId,
+            { missionId },
+            () => set((s) => ({ learningMode: !s.learningMode }))
+        );
+        set({ lineageGraph: buildUiLineageGraph(missionId) });
+    },
 
     nextStep: () =>
         set((s) => ({
@@ -158,14 +207,21 @@ export const useSimStore = create<SimState>((set, get) => ({
         const step = missions[missionId].coachSteps[currentStep];
         if (!step) return;
 
-        const newKnobs = { ...knobs, ...step.expectedKnobDiff };
-        const snapshot = simulate(missionId, newKnobs);
-        const lineageGraph = buildLineageGraph(missionId, snapshot, newKnobs);
-        set({
-            knobs: newKnobs,
-            snapshot,
-            lineageGraph,
-        });
+        runUiAction(
+            "Apply guide step",
+            "guide_step",
+            missionId,
+            { stepIndex: currentStep },
+            () => {
+                const newKnobs = { ...knobs, ...step.expectedKnobDiff };
+                const snapshot = simulate(missionId, newKnobs);
+                set({
+                    knobs: newKnobs,
+                    snapshot,
+                });
+            }
+        );
+        set({ lineageGraph: buildUiLineageGraph(missionId) });
     },
 
     applyStepByIndex: (idx) => {
@@ -174,15 +230,22 @@ export const useSimStore = create<SimState>((set, get) => ({
         const step = missions[missionId].coachSteps[idx];
         if (!step) return;
 
-        const newKnobs = { ...knobs, ...step.expectedKnobDiff };
-        const snapshot = simulate(missionId, newKnobs);
-        const lineageGraph = buildLineageGraph(missionId, snapshot, newKnobs);
-        set({
-            knobs: newKnobs,
-            snapshot,
-            lineageGraph,
-            currentStep: idx,
-        });
+        runUiAction(
+            "Jump to guide step",
+            "guide_step",
+            missionId,
+            { stepIndex: idx },
+            () => {
+                const newKnobs = { ...knobs, ...step.expectedKnobDiff };
+                const snapshot = simulate(missionId, newKnobs);
+                set({
+                    knobs: newKnobs,
+                    snapshot,
+                    currentStep: idx,
+                });
+            }
+        );
+        set({ lineageGraph: buildUiLineageGraph(missionId) });
     },
 
     toggleGemini: () => set((s) => ({ isGeminiOpen: !s.isGeminiOpen })),
@@ -198,27 +261,64 @@ export const useSimStore = create<SimState>((set, get) => ({
         });
 
         // Get response
-        const response = await getGeminiResponse(text, { missionId, knobs, snap: snapshot });
+        try {
+            const response = await runUiActionAsync(
+                "Gemini message",
+                "gemini_message",
+                missionId,
+                { missionId, textLength: text.length },
+                () => getGeminiResponse(text, { missionId, knobs, snap: snapshot })
+            );
 
-        set((s) => ({
-            chatHistory: [...s.chatHistory, { role: "model", text: response }],
-            isTyping: false,
-        }));
+            set((s) => ({
+                chatHistory: [...s.chatHistory, { role: "model", text: response }],
+                isTyping: false,
+                lineageGraph: buildUiLineageGraph(missionId),
+            }));
+        } catch (error) {
+            set({
+                isTyping: false,
+                lineageGraph: buildUiLineageGraph(missionId),
+            });
+            throw error;
+        }
     },
 
     // Missing actions
     reset: () => {
         const { missionId } = get();
         if (!missionId) return;
-        const snapshot = simulate(missionId, missions[missionId].initialKnobs);
-        const lineageGraph = buildLineageGraph(missionId, snapshot, missions[missionId].initialKnobs);
-        set({
-            knobs: missions[missionId].initialKnobs,
-            snapshot,
-            lineageGraph,
-            currentStep: 0,
-        });
+        runUiAction(
+            "Reset mission state",
+            "plan_reset",
+            missionId,
+            { missionId },
+            () => {
+                const snapshot = simulate(missionId, missions[missionId].initialKnobs);
+                set({
+                    knobs: missions[missionId].initialKnobs,
+                    snapshot,
+                    currentStep: 0,
+                });
+            }
+        );
+        set({ lineageGraph: buildUiLineageGraph(missionId) });
     },
     compareBaseline: false,
-    toggleCompare: () => set((s) => ({ compareBaseline: !s.compareBaseline })),
+    toggleCompare: () => {
+        const missionId = get().missionId;
+        if (!missionId) return;
+        runUiAction(
+            "Toggle baseline comparison",
+            "compare_toggle",
+            missionId,
+            { missionId },
+            () => {
+                set((s) => ({
+                    compareBaseline: !s.compareBaseline,
+                }));
+            }
+        );
+        set({ lineageGraph: buildUiLineageGraph(missionId) });
+    },
 }));

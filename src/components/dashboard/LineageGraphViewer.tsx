@@ -210,21 +210,13 @@ export function LineageGraphViewer({ lineageGraph }: LineageGraphViewerProps) {
             <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                     <GitBranch className="h-5 w-5" />
-                    <h3 className="text-lg font-semibold">Data Lineage</h3>
-                    <Badge variant="secondary">{lineageGraph.nodes.length} stages</Badge>
+                    <h3 className="text-lg font-semibold">React App Lineage</h3>
+                    <Badge variant="secondary">{lineageGraph.nodes.length} actions</Badge>
                 </div>
                 <div className="flex items-center gap-4 text-xs text-muted-foreground">
                     <div className="flex items-center gap-2">
-                        <div className="h-3 w-3 rounded-full bg-orange-500" />
-                        <span>Shuffle</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="h-3 w-3 rounded-full bg-teal-500" />
-                        <span>Broadcast</span>
-                    </div>
-                    <div className="flex items-center gap-2">
                         <div className="h-3 w-3 rounded-full bg-gray-500" />
-                        <span>Data Flow</span>
+                        <span>Action flow</span>
                     </div>
                 </div>
             </div>
@@ -253,7 +245,7 @@ export function LineageGraphViewer({ lineageGraph }: LineageGraphViewerProps) {
                         </div>
                     </div>
                     <div>
-                        <span className="text-muted-foreground">Critical Path Stages:</span>
+                        <span className="text-muted-foreground">Critical Path Actions:</span>
                         <div className="font-mono font-semibold">
                             {lineageGraph.metadata.criticalPath.length}
                         </div>
