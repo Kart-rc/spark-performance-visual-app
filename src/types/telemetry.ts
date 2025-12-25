@@ -55,6 +55,10 @@ export type LineageNode = {
         spillMB?: number;
         skewScore?: number;
     };
+    columns?: {
+        name: string;
+        type: string;
+    }[];
     knobsAffecting: string[]; // Which knobs affect this node
     attributes: Record<string, string | number | boolean>;
 };

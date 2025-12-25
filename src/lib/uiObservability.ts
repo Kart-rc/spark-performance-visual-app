@@ -63,6 +63,12 @@ const buildStaticScaLineage = (
                 traceId: "static-sca",
                 staticDoc: true,
             },
+            columns: [
+                { name: "eventId", type: "string" },
+                { name: "eventType", type: "string" },
+                { name: "payload", type: "json" },
+                { name: "timestamp", type: "long" },
+            ],
         },
         {
             id: `${prefix}-state`,
@@ -76,6 +82,10 @@ const buildStaticScaLineage = (
                 traceId: "static-sca",
                 staticDoc: true,
             },
+            columns: [
+                { name: "missionState", type: "struct" },
+                { name: "activeKnobs", type: "map<string, bool>" },
+            ],
         },
         {
             id: `${prefix}-simulate`,
@@ -278,7 +288,7 @@ export const buildUiLineageGraph = (missionId: MissionId | null): LineageGraph |
                       id: `${staticNodes[staticNodes.length - 1].id}-${interactionNodes[0].id}`,
                       source: staticNodes[staticNodes.length - 1].id,
                       target: interactionNodes[0].id,
-                      type: "data_flow",
+                      type: "data_flow" as const,
                       label: "User action lineage",
                   },
                   ...interactionEdges,

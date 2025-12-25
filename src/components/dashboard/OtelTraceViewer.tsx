@@ -19,6 +19,7 @@ export function OtelTraceViewer() {
     const [traces, setTraces] = useState<OtelTrace[]>([]);
     const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
     const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
+    const [groupBy, setGroupBy] = useState<"name" | "status">("name");
 
     useEffect(() => {
         const interval = setInterval(() => {
@@ -63,19 +64,14 @@ export function OtelTraceViewer() {
         }
     };
 
-    const getStatusFill = (status: string) => {
-        switch (status) {
-            case "ok":
-                return "bg-emerald-500/70";
-            case "error":
-                return "bg-red-500/80";
-            default:
-                return "bg-slate-400/70";
-        }
-    };
-
     const groupedTraces = traces.reduce<Record<string, OtelTrace[]>>((acc, trace) => {
-        const key = trace.rootSpan?.name || "Unknown flow";
+        let key = "Unknown";
+        if (groupBy === "name") {
+            key = trace.rootSpan?.name || "Unknown flow";
+        } else if (groupBy === "status") {
+            key = trace.rootSpan?.status || "unset";
+        }
+
         if (!acc[key]) acc[key] = [];
         acc[key].push(trace);
         return acc;
@@ -88,35 +84,69 @@ export function OtelTraceViewer() {
         const traceStart = trace.startTime;
         const traceWidth = trace.duration || 1;
 
+        // Calculate visual rows to avoid overlap
+        const spansWithRows = trace.spans
+            .sort((a, b) => a.startTime - b.startTime)
+            .map((span) => ({ ...span, row: 0 }));
+
+        // Simple improved packing algorithm
+        for (let i = 0; i < spansWithRows.length; i++) {
+            const current = spansWithRows[i];
+            // Check for overlaps with previous spans in the same row
+            let row = 0;
+            while (true) {
+                let overlap = false;
+                for (let j = 0; j < i; j++) {
+                    const prev = spansWithRows[j];
+                    if (prev.row === row) {
+                        // Check if time intervals overlap
+                        if (current.startTime < prev.endTime && current.endTime > prev.startTime) {
+                            overlap = true;
+                            break;
+                        }
+                    }
+                }
+                if (!overlap) {
+                    current.row = row;
+                    break;
+                }
+                row++;
+            }
+        }
+
+        const maxRow = Math.max(...spansWithRows.map(s => s.row));
+        const rowHeight = 24;
+        const totalHeight = (maxRow + 1) * rowHeight + 10;
+
         return (
             <div className="mt-2">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
                     <span>Trace timeline</span>
                     <span className="font-mono text-foreground">{formatDuration(trace.duration)}</span>
                 </div>
-                <div className="relative h-14 bg-muted/40 rounded overflow-hidden border border-border/60">
-                    {trace.spans
-                        .sort((a, b) => a.startTime - b.startTime)
-                        .map((span) => {
+                <div
+                    className="relative bg-muted/40 rounded overflow-hidden border border-border/60"
+                    style={{ height: `${totalHeight}px` }}
+                >
+                    {spansWithRows.map((span) => {
                             const spanStart = span.startTime - traceStart;
                             const leftPct = (spanStart / traceWidth) * 100;
                             const widthPct = Math.max((span.duration / traceWidth) * 100, 0.5);
                             return (
-                                <div key={span.spanId} className="absolute inset-y-1">
-                                    <div
-                                        className={`absolute h-4 rounded ${getStatusFill(span.status)}`}
-                                        style={{
-                                            left: `${leftPct}%`,
-                                            width: `${widthPct}%`,
-                                        }}
-                                        title={`${span.name} • ${formatDuration(span.duration)}`}
-                                    />
-                                    <div
-                                        className="absolute top-5 text-[10px] font-mono text-foreground truncate max-w-[140px]"
-                                        style={{ left: `${leftPct}%` }}
-                                    >
-                                        {span.name}
-                                    </div>
+                                <div
+                                    key={span.spanId}
+                                    className="absolute h-5 rounded text-[10px] flex items-center px-1 truncate select-none hover:ring-1 ring-ring"
+                                    style={{
+                                        left: `${leftPct}%`,
+                                        width: `${widthPct}%`,
+                                        top: `${span.row * rowHeight + 5}px`,
+                                        backgroundColor: span.status === 'error' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.2)',
+                                        borderLeft: `2px solid ${span.status === 'error' ? '#ef4444' : '#3b82f6'}`,
+                                        zIndex: 10
+                                    }}
+                                    title={`${span.name} • ${formatDuration(span.duration)}`}
+                                >
+                                    {span.name}
                                 </div>
                             );
                         })}
@@ -231,10 +261,27 @@ export function OtelTraceViewer() {
                     <h3 className="text-lg font-semibold">OpenTelemetry Traces</h3>
                     <Badge variant="secondary">{traces.length}</Badge>
                 </div>
-                <Button variant="outline" size="sm" onClick={handleClearTraces}>
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Clear
-                </Button>
+                <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 bg-muted rounded p-1 text-xs">
+                        <span className="px-1 text-muted-foreground">Group by:</span>
+                        <button
+                            className={`px-2 py-0.5 rounded ${groupBy === 'name' ? 'bg-background shadow-sm' : 'hover:bg-background/50'}`}
+                            onClick={() => setGroupBy("name")}
+                        >
+                            Name
+                        </button>
+                        <button
+                            className={`px-2 py-0.5 rounded ${groupBy === 'status' ? 'bg-background shadow-sm' : 'hover:bg-background/50'}`}
+                            onClick={() => setGroupBy("status")}
+                        >
+                            Status
+                        </button>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={handleClearTraces}>
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Clear
+                    </Button>
+                </div>
             </div>
 
             {traces.length === 0 ? (

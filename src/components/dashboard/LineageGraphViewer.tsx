@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import ReactFlow, {
     Node,
     Edge,
@@ -13,7 +13,7 @@ import "reactflow/dist/style.css";
 import { LineageGraph } from "@/types/telemetry";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { GitBranch, Clock, Database, Shuffle, Filter, Cpu } from "lucide-react";
+import { GitBranch, Clock, Database, Shuffle, Filter, Cpu, ChevronDown, ChevronRight } from "lucide-react";
 
 interface LineageGraphViewerProps {
     lineageGraph: LineageGraph;
@@ -31,6 +31,10 @@ type CustomNodeData = {
     isCritical?: boolean;
     isStaticDoc?: boolean;
     description?: string;
+    columns?: {
+        name: string;
+        type: string;
+    }[];
 };
 
 const nodeTypeColors = {
@@ -60,6 +64,7 @@ const nodeTypeIcons = {
 function CustomNode({ data }: { data: CustomNodeData }) {
     const Icon = nodeTypeIcons[data.type as keyof typeof nodeTypeIcons] || Cpu;
     const color = nodeTypeColors[data.type as keyof typeof nodeTypeColors] || "#6b7280";
+    const [showColumns, setShowColumns] = useState(false);
 
     return (
         <div
@@ -114,6 +119,33 @@ function CustomNode({ data }: { data: CustomNodeData }) {
                     </div>
                 )}
             </div>
+
+            {data.columns && data.columns.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-border">
+                    <div
+                        className="flex items-center justify-between cursor-pointer hover:bg-muted/50 rounded px-1 -mx-1"
+                        onClick={() => setShowColumns(!showColumns)}
+                    >
+                        <span className="text-xs text-muted-foreground">Columns ({data.columns.length})</span>
+                        {showColumns ? (
+                            <ChevronDown className="h-3 w-3" />
+                        ) : (
+                            <ChevronRight className="h-3 w-3" />
+                        )}
+                    </div>
+
+                    {showColumns && (
+                        <div className="mt-1 space-y-1 bg-muted/30 p-1.5 rounded max-h-[120px] overflow-y-auto">
+                            {data.columns.map((col, i) => (
+                                <div key={i} className="flex items-center justify-between text-[10px]">
+                                    <span className="font-medium truncate max-w-[100px]" title={col.name}>{col.name}</span>
+                                    <span className="text-muted-foreground font-mono">{col.type}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {data.knobsAffecting && data.knobsAffecting.length > 0 && (
                 <div className="mt-2 pt-2 border-t border-border">
@@ -180,6 +212,7 @@ export function LineageGraphViewer({ lineageGraph }: LineageGraphViewerProps) {
                     isCritical,
                     isStaticDoc: Boolean(node.attributes?.staticDoc),
                     description: node.attributes?.description,
+                    columns: node.columns,
                 },
             };
         });
