@@ -1,17 +1,25 @@
 import { trace, SpanStatusCode, Span } from "@opentelemetry/api";
 import { WebTracerProvider } from "@opentelemetry/sdk-trace-web";
-import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import {
+    ReadableSpan,
+    SpanExporter,
+    SimpleSpanProcessor,
+} from "@opentelemetry/sdk-trace-base";
+import { ExportResultCode } from "@opentelemetry/core";
 import { OtelSpan, OtelTrace } from "@/types/telemetry";
 
 // Custom in-memory exporter for visualization
-class InMemorySpanExporter {
+class InMemorySpanExporter implements SpanExporter {
     private spans: OtelSpan[] = [];
 
-    export(spans: any[], resultCallback: (result: any) => void): void {
+    export(
+        spans: ReadableSpan[],
+        resultCallback: (result: { code: ExportResultCode; error?: Error }) => void
+    ): void {
         spans.forEach((span) => {
             this.spans.push(this.convertSpan(span));
         });
-        resultCallback({ code: 0 });
+        resultCallback({ code: ExportResultCode.SUCCESS });
     }
 
     shutdown(): Promise<void> {
@@ -26,7 +34,7 @@ class InMemorySpanExporter {
         this.spans = [];
     }
 
-    private convertSpan(span: any): OtelSpan {
+    private convertSpan(span: ReadableSpan): OtelSpan {
         const attributes: Record<string, string | number | boolean> = {};
         if (span.attributes) {
             Object.entries(span.attributes).forEach(([key, value]) => {
@@ -46,7 +54,7 @@ class InMemorySpanExporter {
         return {
             spanId: span.spanContext().spanId,
             traceId: span.spanContext().traceId,
-            parentSpanId: span.parentSpanId,
+            parentSpanId: span.parentSpanContext?.spanId,
             name: span.name,
             startTime,
             endTime,
@@ -62,10 +70,11 @@ class InMemorySpanExporter {
 // Initialize OpenTelemetry
 export const spanExporter = new InMemorySpanExporter();
 
-const provider = new WebTracerProvider();
+const provider = new WebTracerProvider({
+    // SDK v2 wires span processors through config
+    spanProcessors: [new SimpleSpanProcessor(spanExporter)],
+});
 
-// @ts-ignore - BatchSpanProcessor is compatible but types don't match exactly
-provider.addSpanProcessor(new BatchSpanProcessor(spanExporter));
 provider.register();
 
 export const tracer = trace.getTracer("spark-simulation", "1.0.0");
