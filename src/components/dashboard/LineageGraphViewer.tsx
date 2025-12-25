@@ -19,6 +19,20 @@ interface LineageGraphViewerProps {
     lineageGraph: LineageGraph;
 }
 
+type CustomNodeData = {
+    label: string;
+    type: string;
+    durationMs?: number;
+    shuffleReadMB?: number;
+    shuffleWriteMB?: number;
+    spillMB?: number;
+    skewScore?: number;
+    knobsAffecting?: string[];
+    isCritical?: boolean;
+    isStaticDoc?: boolean;
+    description?: string;
+};
+
 const nodeTypeColors = {
     source: "#10b981", // green
     transformation: "#3b82f6", // blue
@@ -43,7 +57,7 @@ const nodeTypeIcons = {
     sink: Database,
 };
 
-function CustomNode({ data }: { data: any }) {
+function CustomNode({ data }: { data: CustomNodeData }) {
     const Icon = nodeTypeIcons[data.type as keyof typeof nodeTypeIcons] || Cpu;
     const color = nodeTypeColors[data.type as keyof typeof nodeTypeColors] || "#6b7280";
 
@@ -55,6 +69,11 @@ function CustomNode({ data }: { data: any }) {
             <div className="flex items-center gap-2 mb-2">
                 <Icon className="h-4 w-4" style={{ color }} />
                 <div className="font-semibold text-sm">{data.label}</div>
+                {data.isStaticDoc && (
+                    <Badge variant="outline" className="text-[10px] border-blue-400/50 bg-blue-500/10 text-blue-200">
+                        SCA doc
+                    </Badge>
+                )}
             </div>
 
             <div className="text-xs space-y-1">
@@ -122,6 +141,12 @@ function CustomNode({ data }: { data: any }) {
                     </Badge>
                 </div>
             )}
+
+            {data.description && (
+                <div className="mt-2 pt-2 border-t border-border text-muted-foreground leading-snug">
+                    {data.description}
+                </div>
+            )}
         </div>
     );
 }
@@ -153,6 +178,8 @@ export function LineageGraphViewer({ lineageGraph }: LineageGraphViewerProps) {
                     skewScore: node.metrics.skewScore,
                     knobsAffecting: node.knobsAffecting,
                     isCritical,
+                    isStaticDoc: Boolean(node.attributes?.staticDoc),
+                    description: node.attributes?.description,
                 },
             };
         });
@@ -193,17 +220,18 @@ export function LineageGraphViewer({ lineageGraph }: LineageGraphViewerProps) {
 
     // Auto-layout using a simple top-to-bottom layout
     useEffect(() => {
-        if (nodes.length > 0) {
-            const layoutNodes = nodes.map((node, index) => ({
-                ...node,
-                position: {
-                    x: 300,
-                    y: index * 220 + 50,
-                },
-            }));
-            setNodes(layoutNodes);
-        }
-    }, [lineageGraph.nodes.length]); // Only re-layout when number of nodes changes
+        setNodes((currentNodes) =>
+            currentNodes.length > 0
+                ? currentNodes.map((node, index) => ({
+                      ...node,
+                      position: {
+                          x: 300,
+                          y: index * 220 + 50,
+                      },
+                  }))
+                : currentNodes
+        );
+    }, [lineageGraph.nodes.length, setNodes]); // Only re-layout when number of nodes changes
 
     return (
         <Card className="p-4 h-full flex flex-col">
