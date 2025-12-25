@@ -1,0 +1,253 @@
+import { useEffect, useState } from "react";
+import { getTraces, clearTraces } from "@/lib/telemetry";
+import { OtelTrace, OtelSpan } from "@/types/telemetry";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Activity, Clock, Zap, Trash2, ChevronDown, ChevronRight } from "lucide-react";
+
+export function OtelTraceViewer() {
+    const [traces, setTraces] = useState<OtelTrace[]>([]);
+    const [selectedTrace, setSelectedTrace] = useState<OtelTrace | null>(null);
+    const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setTraces(getTraces());
+        }, 1000);
+
+        return () => clearInterval(interval);
+    }, []);
+
+    const handleClearTraces = () => {
+        clearTraces();
+        setTraces([]);
+        setSelectedTrace(null);
+    };
+
+    const toggleSpan = (spanId: string) => {
+        setExpandedSpans((prev) => {
+            const next = new Set(prev);
+            if (next.has(spanId)) {
+                next.delete(spanId);
+            } else {
+                next.add(spanId);
+            }
+            return next;
+        });
+    };
+
+    const formatDuration = (ms: number) => {
+        if (ms < 1) return `${(ms * 1000).toFixed(2)}µs`;
+        if (ms < 1000) return `${ms.toFixed(2)}ms`;
+        return `${(ms / 1000).toFixed(2)}s`;
+    };
+
+    const getStatusColor = (status: string) => {
+        switch (status) {
+            case "ok":
+                return "bg-green-500/20 text-green-300 border-green-500/50";
+            case "error":
+                return "bg-red-500/20 text-red-300 border-red-500/50";
+            default:
+                return "bg-gray-500/20 text-gray-300 border-gray-500/50";
+        }
+    };
+
+    const renderSpanTree = (span: OtelSpan, trace: OtelTrace, level: number = 0) => {
+        const children = trace.spans.filter((s) => s.parentSpanId === span.spanId);
+        const isExpanded = expandedSpans.has(span.spanId);
+        const hasChildren = children.length > 0;
+
+        // Calculate span position and width relative to trace
+        const traceStart = trace.startTime;
+        const traceWidth = trace.duration;
+        const spanStart = span.startTime - traceStart;
+        const spanWidthPct = (span.duration / traceWidth) * 100;
+        const spanLeftPct = (spanStart / traceWidth) * 100;
+
+        return (
+            <div key={span.spanId} className="mb-2">
+                <div
+                    className="flex items-start gap-2 hover:bg-muted/50 p-2 rounded cursor-pointer"
+                    onClick={() => toggleSpan(span.spanId)}
+                    style={{ paddingLeft: `${level * 24}px` }}
+                >
+                    <div className="flex-shrink-0 mt-1">
+                        {hasChildren ? (
+                            isExpanded ? (
+                                <ChevronDown className="h-4 w-4" />
+                            ) : (
+                                <ChevronRight className="h-4 w-4" />
+                            )
+                        ) : (
+                            <div className="h-4 w-4" />
+                        )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className="font-medium text-sm truncate">{span.name}</span>
+                            <Badge variant="outline" className={getStatusColor(span.status)}>
+                                {span.status}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground ml-auto">
+                                {formatDuration(span.duration)}
+                            </span>
+                        </div>
+
+                        {/* Span timeline bar */}
+                        <div className="relative h-6 bg-muted/30 rounded overflow-hidden mb-1">
+                            <div
+                                className="absolute h-full bg-blue-500/60 hover:bg-blue-500/80 transition-colors"
+                                style={{
+                                    left: `${spanLeftPct}%`,
+                                    width: `${spanWidthPct}%`,
+                                }}
+                                title={`${formatDuration(span.duration)} (${spanLeftPct.toFixed(1)}% - ${(spanLeftPct + spanWidthPct).toFixed(1)}%)`}
+                            />
+                        </div>
+
+                        {isExpanded && (
+                            <div className="mt-2 space-y-2 text-xs">
+                                {/* Attributes */}
+                                {Object.keys(span.attributes).length > 0 && (
+                                    <div>
+                                        <div className="font-semibold mb-1">Attributes:</div>
+                                        <div className="bg-muted/50 p-2 rounded space-y-1">
+                                            {Object.entries(span.attributes).map(([key, value]) => (
+                                                <div key={key} className="flex gap-2">
+                                                    <span className="text-muted-foreground">{key}:</span>
+                                                    <span className="font-mono">{String(value)}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Events */}
+                                {span.events.length > 0 && (
+                                    <div>
+                                        <div className="font-semibold mb-1">Events:</div>
+                                        <div className="bg-muted/50 p-2 rounded space-y-1">
+                                            {span.events.map((event, i) => (
+                                                <div key={i} className="flex gap-2">
+                                                    <Zap className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                                                    <span>{event.name}</span>
+                                                    <span className="text-muted-foreground text-xs ml-auto">
+                                                        {new Date(event.timestamp).toLocaleTimeString()}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Render children */}
+                {isExpanded && children.map((child) => renderSpanTree(child, trace, level + 1))}
+            </div>
+        );
+    };
+
+    return (
+        <Card className="p-4 h-full flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                    <Activity className="h-5 w-5" />
+                    <h3 className="text-lg font-semibold">OpenTelemetry Traces</h3>
+                    <Badge variant="secondary">{traces.length}</Badge>
+                </div>
+                <Button variant="outline" size="sm" onClick={handleClearTraces}>
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Clear
+                </Button>
+            </div>
+
+            {traces.length === 0 ? (
+                <div className="flex-1 flex items-center justify-center text-muted-foreground">
+                    <div className="text-center">
+                        <Activity className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                        <p>No traces captured yet</p>
+                        <p className="text-xs">Run a simulation to generate traces</p>
+                    </div>
+                </div>
+            ) : (
+                <div className="flex-1 flex gap-4 min-h-0">
+                    {/* Trace list */}
+                    <div className="w-64 flex-shrink-0">
+                        <ScrollArea className="h-full">
+                            {traces.map((trace) => (
+                                <Card
+                                    key={trace.traceId}
+                                    className={`p-3 mb-2 cursor-pointer transition-colors ${
+                                        selectedTrace?.traceId === trace.traceId
+                                            ? "border-primary bg-muted/50"
+                                            : "hover:bg-muted/30"
+                                    }`}
+                                    onClick={() => setSelectedTrace(trace)}
+                                >
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <Clock className="h-4 w-4 text-muted-foreground" />
+                                        <span className="text-xs text-muted-foreground">
+                                            {new Date(trace.startTime).toLocaleTimeString()}
+                                        </span>
+                                    </div>
+                                    <div className="text-sm font-medium truncate mb-1">
+                                        {trace.rootSpan.name}
+                                    </div>
+                                    <div className="flex items-center justify-between text-xs">
+                                        <span className="text-muted-foreground">
+                                            {trace.spans.length} spans
+                                        </span>
+                                        <span className="font-mono">
+                                            {formatDuration(trace.duration)}
+                                        </span>
+                                    </div>
+                                </Card>
+                            ))}
+                        </ScrollArea>
+                    </div>
+
+                    {/* Trace details */}
+                    <div className="flex-1 min-w-0">
+                        {selectedTrace ? (
+                            <ScrollArea className="h-full">
+                                <div className="space-y-2">
+                                    <div className="bg-muted/50 p-3 rounded">
+                                        <div className="grid grid-cols-2 gap-2 text-xs">
+                                            <div>
+                                                <span className="text-muted-foreground">Trace ID:</span>
+                                                <div className="font-mono text-xs truncate">
+                                                    {selectedTrace.traceId}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <span className="text-muted-foreground">Duration:</span>
+                                                <div className="font-mono">
+                                                    {formatDuration(selectedTrace.duration)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Render root spans and their children */}
+                                    {selectedTrace.spans
+                                        .filter((s) => !s.parentSpanId)
+                                        .map((span) => renderSpanTree(span, selectedTrace))}
+                                </div>
+                            </ScrollArea>
+                        ) : (
+                            <div className="h-full flex items-center justify-center text-muted-foreground">
+                                Select a trace to view details
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </Card>
+    );
+}

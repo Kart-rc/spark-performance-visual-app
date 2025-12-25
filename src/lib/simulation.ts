@@ -8,6 +8,7 @@ import {
     StageMetric,
 } from "@/types";
 import { missions } from "@/data/missions";
+import { withSyncSpan } from "@/lib/telemetry";
 
 function clamp(n: number, lo: number, hi: number) {
     return Math.max(lo, Math.min(hi, n));
@@ -708,8 +709,32 @@ function computeScorecard(
 }
 
 export function simulate(missionId: MissionId, knobs: Knobs): Snapshot {
-    let stages = baselineStages(missionId);
-    let plan = baselinePlan(missionId);
+    return withSyncSpan(
+        "simulate",
+        {
+            missionId,
+            aqe: knobs.aqe,
+            broadcastCustomers: knobs.broadcastCustomers,
+            projectEarly: knobs.projectEarly,
+            filterEarly: knobs.filterEarly,
+        },
+        (span) => {
+            span.addEvent("simulation_started", { missionId });
+
+            let stages = baselineStages(missionId);
+            let plan = baselinePlan(missionId);
+            return simulateInternal(missionId, knobs, stages, plan, span);
+        }
+    );
+}
+
+function simulateInternal(
+    missionId: MissionId,
+    knobs: Knobs,
+    stages: StageMetric[],
+    plan: Plan,
+    parentSpan: any
+): Snapshot {
 
     // Meta for visuals
     let shuffleIntensity =
@@ -1308,6 +1333,16 @@ export function simulate(missionId: MissionId, knobs: Knobs): Snapshot {
         fileImpactPct,
         notes,
     });
+
+    parentSpan.addEvent("simulation_completed", {
+        totalDurationMs: scorecard.runtimeMin * 60000,
+        slaRisk: scorecard.slaRisk,
+        costUnits: scorecard.costUnits,
+    });
+
+    parentSpan.setAttribute("result.runtime_min", scorecard.runtimeMin);
+    parentSpan.setAttribute("result.cost_units", scorecard.costUnits);
+    parentSpan.setAttribute("result.sla_risk", scorecard.slaRisk);
 
     return { stages, scorecard, plan, animation };
 }
