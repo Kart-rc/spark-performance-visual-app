@@ -75,10 +75,18 @@ export type LineageEdge = {
     };
 };
 
+export type ColumnLineage = {
+    columnName: string;
+    sourceColumns: string[]; // Which columns from previous stage(s) contributed
+    transformation?: string; // Description of transformation applied
+    dataType: string;
+};
+
 export type LineageGraph = {
     missionId: string;
     nodes: LineageNode[];
     edges: LineageEdge[];
+    columnLineages?: Map<string, ColumnLineage[]>; // nodeId -> column lineages
     metadata: {
         generatedAt: number;
         knobsSnapshot: Record<string, boolean | number>;

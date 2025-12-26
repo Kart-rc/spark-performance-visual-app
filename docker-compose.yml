@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # Jaeger - OpenTelemetry trace collector and UI
+  jaeger:
+    image: jaegertracing/all-in-one:1.53
+    container_name: spark-app-jaeger
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # Jaeger HTTP collector
+      - "14250:14250"  # Jaeger gRPC
+      - "4317:4317"    # OTLP gRPC receiver
+      - "4318:4318"    # OTLP HTTP receiver
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - LOG_LEVEL=debug
+    networks:
+      - observability
+
+  # Tempo - Grafana's distributed tracing backend
+  tempo:
+    image: grafana/tempo:2.3.1
+    container_name: spark-app-tempo
+    command: [ "-config.file=/etc/tempo.yaml" ]
+    volumes:
+      - ./tempo-config.yaml:/etc/tempo.yaml
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"   # Tempo HTTP
+      - "4319:4318"   # OTLP HTTP (on different port to avoid conflict)
+      - "9411:9411"   # Zipkin
+    networks:
+      - observability
+
+  # Grafana - Visualization and dashboards
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: spark-app-grafana
+    ports:
+      - "3001:3000"   # Grafana UI (using 3001 to avoid conflict with React app)
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+    volumes:
+      - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
+      - grafana-data:/var/lib/grafana
+    networks:
+      - observability
+    depends_on:
+      - tempo
+      - jaeger
+
+  # Prometheus - Metrics collection (optional, for future use)
+  prometheus:
+    image: prom/prometheus:v2.48.1
+    container_name: spark-app-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - observability
+
+volumes:
+  tempo-data:
+  grafana-data:
+  prometheus-data:
+
+networks:
+  observability:
+    driver: bridge
