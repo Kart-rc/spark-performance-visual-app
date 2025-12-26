@@ -1,6 +1,21 @@
 version: '3.8'
 
 services:
+  app:
+    build:
+      context: .
+      args:
+        VITE_ENABLE_OTLP: "true"
+        VITE_OTLP_ENDPOINT: http://tempo:4318/v1/traces
+        VITE_ENABLE_JAEGER: "false"
+    container_name: spark-performance-ui
+    ports:
+      - "4173:80"
+    depends_on:
+      - tempo
+    networks:
+      - observability
+
   # Jaeger - OpenTelemetry trace collector and UI
   jaeger:
     image: jaegertracing/all-in-one:1.53
