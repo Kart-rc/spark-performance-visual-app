@@ -1,4 +1,5 @@
 import { trace, SpanStatusCode, Span } from "@opentelemetry/api";
+import { JaegerExporter } from "@opentelemetry/exporter-jaeger";
 import { WebTracerProvider } from "@opentelemetry/sdk-trace-web";
 import {
     ReadableSpan,
@@ -8,6 +9,8 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { ExportResultCode } from "@opentelemetry/core";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { resourceFromAttributes } from "@opentelemetry/resources";
+import { SemanticResourceAttributes } from "@opentelemetry/semantic-conventions";
 import { OtelSpan, OtelTrace } from "@/types/telemetry";
 
 // Custom in-memory exporter for visualization
@@ -74,7 +77,10 @@ export const spanExporter = new InMemorySpanExporter();
 
 // Configuration from environment variables
 const OTLP_ENDPOINT = import.meta.env.VITE_OTLP_ENDPOINT || "http://localhost:4318/v1/traces";
-const ENABLE_OTLP = import.meta.env.VITE_ENABLE_OTLP === "true";
+const ENABLE_OTLP = import.meta.env.VITE_ENABLE_OTLP !== "false"; // default on
+const JAEGER_ENDPOINT =
+    import.meta.env.VITE_JAEGER_ENDPOINT || "http://localhost:14268/api/traces";
+const ENABLE_JAEGER = import.meta.env.VITE_ENABLE_JAEGER === "true";
 
 // Build span processors array
 const spanProcessors: (SimpleSpanProcessor | BatchSpanProcessor)[] = [
@@ -97,9 +103,25 @@ if (ENABLE_OTLP) {
     }
 }
 
+// Add Jaeger exporter when explicitly enabled (off by default)
+if (ENABLE_JAEGER) {
+    try {
+        const jaegerExporter = new JaegerExporter({ endpoint: JAEGER_ENDPOINT });
+        spanProcessors.push(new BatchSpanProcessor(jaegerExporter));
+        console.log(`✅ Jaeger exporter configured: ${JAEGER_ENDPOINT}`);
+    } catch (error) {
+        console.error("❌ Failed to configure Jaeger exporter:", error);
+    }
+}
+
 // Create provider with span processors
 const provider = new WebTracerProvider({
     spanProcessors,
+    resource: resourceFromAttributes({
+        [SemanticResourceAttributes.SERVICE_NAME]: "spark-performance-react-app",
+        [SemanticResourceAttributes.SERVICE_VERSION]: "1.0.0",
+        [SemanticResourceAttributes.DEPLOYMENT_ENVIRONMENT]: import.meta.env.MODE || "development",
+    }),
 });
 
 provider.register();
