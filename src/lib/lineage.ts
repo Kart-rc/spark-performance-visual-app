@@ -4,6 +4,7 @@ import {
     LineageNode,
     LineageEdge,
     LineageNodeType,
+    ColumnLineage,
 } from "@/types/telemetry";
 
 // Helper to infer operation type from stage name
@@ -75,6 +76,171 @@ function getAffectingKnobs(
     return affecting;
 }
 
+// Generate column-level lineage for Spark-like operations
+function generateColumnLineage(
+    _stage: StageMetric,
+    nodeType: LineageNodeType,
+    missionId: MissionId
+): { name: string; type: string }[] {
+    // Return realistic Spark columns based on stage type and mission
+    const baseColumns: { name: string; type: string }[] = [];
+
+    switch (nodeType) {
+        case "source":
+            if (missionId === "etl_joins" || missionId === "multi_join") {
+                return [
+                    { name: "customer_id", type: "bigint" },
+                    { name: "order_id", type: "bigint" },
+                    { name: "product_id", type: "bigint" },
+                    { name: "amount", type: "decimal(10,2)" },
+                    { name: "timestamp", type: "timestamp" },
+                    { name: "region", type: "string" },
+                ];
+            } else if (missionId === "cdc_merge") {
+                return [
+                    { name: "id", type: "bigint" },
+                    { name: "name", type: "string" },
+                    { name: "value", type: "decimal(10,2)" },
+                    { name: "updated_at", type: "timestamp" },
+                    { name: "_change_type", type: "string" },
+                ];
+            } else if (missionId === "wide_schema") {
+                // Wide table with many columns
+                const cols = [{ name: "id", type: "bigint" }];
+                for (let i = 1; i <= 50; i++) {
+                    cols.push({ name: `col_${i}`, type: "string" });
+                }
+                return cols;
+            }
+            return [
+                { name: "id", type: "bigint" },
+                { name: "value", type: "string" },
+                { name: "timestamp", type: "timestamp" },
+            ];
+
+        case "join":
+            return [
+                { name: "customer_id", type: "bigint" },
+                { name: "order_id", type: "bigint" },
+                { name: "product_name", type: "string" },
+                { name: "amount", type: "decimal(10,2)" },
+                { name: "region", type: "string" },
+            ];
+
+        case "aggregate":
+            return [
+                { name: "region", type: "string" },
+                { name: "total_amount", type: "decimal(20,2)" },
+                { name: "count", type: "bigint" },
+                { name: "avg_amount", type: "decimal(10,2)" },
+            ];
+
+        case "filter":
+            // Filter retains same schema as input
+            return baseColumns;
+
+        case "project":
+            if (missionId === "wide_schema") {
+                // Projection reduces columns
+                return [
+                    { name: "id", type: "bigint" },
+                    { name: "col_1", type: "string" },
+                    { name: "col_2", type: "string" },
+                    { name: "col_3", type: "string" },
+                ];
+            }
+            return [
+                { name: "id", type: "bigint" },
+                { name: "value", type: "string" },
+            ];
+
+        default:
+            return [];
+    }
+}
+
+// Build column lineage tracking transformations
+function buildColumnLineages(
+    nodes: LineageNode[],
+    _edges: LineageEdge[]
+): Map<string, ColumnLineage[]> {
+    const columnLineages = new Map<string, ColumnLineage[]>();
+
+    nodes.forEach((node, index) => {
+        const lineages: ColumnLineage[] = [];
+        const columns = node.columns || [];
+
+        columns.forEach((col) => {
+            let sourceColumns: string[] = [];
+            let transformation = "";
+
+            // Determine source columns based on node type
+            switch (node.type) {
+                case "source":
+                    // Source nodes have no upstream
+                    sourceColumns = [];
+                    transformation = "table scan";
+                    break;
+
+                case "join":
+                    // Join combines columns from multiple sources
+                    if (index > 0) {
+                        const prevNode = nodes[index - 1];
+                        sourceColumns = prevNode.columns?.map((c) => c.name) || [];
+                    }
+                    transformation = col.name.includes("id") ? "join key" : "passthrough";
+                    break;
+
+                case "aggregate":
+                    // Aggregations create new columns
+                    if (col.name.includes("total") || col.name.includes("sum")) {
+                        sourceColumns = ["amount"];
+                        transformation = "SUM(amount)";
+                    } else if (col.name.includes("count")) {
+                        sourceColumns = ["*"];
+                        transformation = "COUNT(*)";
+                    } else if (col.name.includes("avg")) {
+                        sourceColumns = ["amount"];
+                        transformation = "AVG(amount)";
+                    } else {
+                        sourceColumns = [col.name];
+                        transformation = "GROUP BY";
+                    }
+                    break;
+
+                case "filter":
+                    // Filter passes through columns
+                    sourceColumns = [col.name];
+                    transformation = "filter predicate";
+                    break;
+
+                case "project":
+                    // Project selects specific columns
+                    sourceColumns = [col.name];
+                    transformation = "column selection";
+                    break;
+
+                default:
+                    sourceColumns = [col.name];
+                    transformation = "passthrough";
+            }
+
+            lineages.push({
+                columnName: col.name,
+                sourceColumns,
+                transformation,
+                dataType: col.type,
+            });
+        });
+
+        if (lineages.length > 0) {
+            columnLineages.set(node.id, lineages);
+        }
+    });
+
+    return columnLineages;
+}
+
 // Build lineage graph from snapshot
 export function buildLineageGraph(
     missionId: MissionId,
@@ -87,6 +253,8 @@ export function buildLineageGraph(
     // Create nodes for each stage
     snapshot.stages.forEach((stage, index) => {
         const nodeType = inferNodeType(stage.name);
+        const columns = generateColumnLineage(stage, nodeType, missionId);
+
         const node: LineageNode = {
             id: stage.id,
             type: nodeType,
@@ -100,6 +268,7 @@ export function buildLineageGraph(
                 spillMB: stage.spillMB,
                 skewScore: stage.skewScore,
             },
+            columns,
             knobsAffecting: getAffectingKnobs(stage, missionId, knobs),
             attributes: {
                 stageIndex: index,
@@ -145,10 +314,14 @@ export function buildLineageGraph(
         .slice(0, Math.ceil(nodes.length / 2))
         .map((n) => n.id);
 
+    // Build column lineages
+    const columnLineages = buildColumnLineages(nodes, edges);
+
     return {
         missionId,
         nodes,
         edges,
+        columnLineages,
         metadata: {
             generatedAt: Date.now(),
             knobsSnapshot: { ...knobs },

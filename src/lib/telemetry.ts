@@ -4,8 +4,10 @@ import {
     ReadableSpan,
     SpanExporter,
     SimpleSpanProcessor,
+    BatchSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 import { ExportResultCode } from "@opentelemetry/core";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { OtelSpan, OtelTrace } from "@/types/telemetry";
 
 // Custom in-memory exporter for visualization
@@ -70,9 +72,34 @@ class InMemorySpanExporter implements SpanExporter {
 // Initialize OpenTelemetry
 export const spanExporter = new InMemorySpanExporter();
 
+// Configuration from environment variables
+const OTLP_ENDPOINT = import.meta.env.VITE_OTLP_ENDPOINT || "http://localhost:4318/v1/traces";
+const ENABLE_OTLP = import.meta.env.VITE_ENABLE_OTLP === "true";
+
+// Build span processors array
+const spanProcessors: (SimpleSpanProcessor | BatchSpanProcessor)[] = [
+    new SimpleSpanProcessor(spanExporter), // In-memory for UI
+];
+
+// Add OTLP exporter for Grafana/Tempo if enabled
+if (ENABLE_OTLP) {
+    try {
+        const otlpExporter = new OTLPTraceExporter({
+            url: OTLP_ENDPOINT,
+            headers: {
+                "Content-Type": "application/json",
+            },
+        });
+        spanProcessors.push(new BatchSpanProcessor(otlpExporter));
+        console.log(`✅ OTLP exporter configured: ${OTLP_ENDPOINT}`);
+    } catch (error) {
+        console.error("❌ Failed to configure OTLP exporter:", error);
+    }
+}
+
+// Create provider with span processors
 const provider = new WebTracerProvider({
-    // SDK v2 wires span processors through config
-    spanProcessors: [new SimpleSpanProcessor(spanExporter)],
+    spanProcessors,
 });
 
 provider.register();
