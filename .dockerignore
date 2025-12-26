@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+npm-debug.log*
+Dockerfile.local
+docker-compose.override.yml
+.DS_Store
+coverage

@@ -21,6 +21,36 @@ This guide explains how to use the OpenTelemetry tracing and column-level lineag
 
 ## Quick Start
 
+### Run the full stack with Docker Compose
+
+1. Build and start the React app with the observability services:
+   ```bash
+   docker compose up --build app tempo grafana jaeger prometheus
+   ```
+   - App UI: http://localhost:4173
+   - Jaeger: http://localhost:16686
+   - Grafana: http://localhost:3001 (Tempo datasouce is pre-provisioned)
+2. Open the app at http://localhost:4173 and click **Start mission**.
+3. Scroll to the **Observability Panel** and confirm:
+   - **Telemetry Traces** tab shows spans for UI interactions (trace ID links open in Grafana/Tempo).
+   - **App Lineage** tab renders column-level lineage for the current mission.
+4. (Optional) Cross-check the exported traces in:
+   - Grafana **Explore → Tempo** using `spark-performance-react-app` or TraceQL queries (e.g., `{app.mission != ""}`).
+   - Jaeger by searching for service `spark-performance-react-app`.
+
+Build-time OTLP settings are provided as Docker build args and default to the in-network Tempo receiver:
+
+```yaml
+app:
+  build:
+    args:
+      VITE_ENABLE_OTLP: "true"
+      VITE_OTLP_ENDPOINT: http://tempo:4318/v1/traces
+      VITE_ENABLE_JAEGER: "false"
+```
+
+Override these values when running `docker compose build` if you need to point the app at a different collector.
+
 ### 1. Start Observability Stack
 
 The project includes a complete observability stack with Docker Compose:
