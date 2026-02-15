@@ -19,11 +19,17 @@ ENV VITE_ENABLE_JAEGER=${VITE_ENABLE_JAEGER}
 
 RUN npm run build
 
-FROM nginx:1.27-alpine AS runtime
+FROM node:22-alpine AS runtime
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/dist /usr/share/nginx/html
+WORKDIR /app
+ENV NODE_ENV=production
 
-EXPOSE 80
+COPY package*.json ./
+RUN npm ci --omit=dev
 
-CMD ["nginx", "-g", "daemon off;"]
+COPY --from=build /app/dist ./dist
+COPY server.js .
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]

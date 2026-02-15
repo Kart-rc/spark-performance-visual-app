@@ -10,7 +10,9 @@ services:
         VITE_ENABLE_JAEGER: "false"
     container_name: spark-performance-ui
     ports:
-      - "4173:80"
+      - "4173:3000"
+    environment:
+      - GEMINI_API_KEY=${VITE_GEMINI_API_KEY}
     depends_on:
       - tempo
     networks:

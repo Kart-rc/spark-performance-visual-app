@@ -83,49 +83,32 @@ export function explainPlanDiff(missionId: MissionId, knobs: Knobs): string {
     return "The plan reflects your current configuration. Compare the 'Before' and 'After' trees to see how knobs affect the physical execution.";
 }
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
 export async function getGeminiResponse(
     query: string,
     context: { missionId: MissionId; snap: Snapshot; knobs: Knobs }
 ): Promise<string> {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-
-    // Fallback to mock if no key
-    if (!apiKey || apiKey === "your_api_key_here") {
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        return getMockResponse(query, context);
-    }
-
     try {
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const response = await fetch("/api/gemini", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ query, context }),
+        });
 
-        const prompt = `
-You are an expert Spark performance tuning assistant.
-Context:
-Mission: ${context.missionId}
-Knobs: ${JSON.stringify(context.knobs, null, 2)}
-Snapshot Stats: ${JSON.stringify(
-            context.snap.stages.map((s) => ({
-                name: s.name,
-                duration: s.durationMs,
-                shuffle: s.shuffleWriteMB,
-                spill: s.spillMB,
-                skew: s.skewScore,
-            })),
-            null,
-            2
-        )}
+        if (!response.ok) {
+            if (response.status === 400) {
+                const errorData = await response.json().catch(() => ({}));
+                if (errorData.error === "API key not configured") {
+                    await new Promise((resolve) => setTimeout(resolve, 800));
+                    return getMockResponse(query, context);
+                }
+            }
+            throw new Error(`Server error: ${response.status}`);
+        }
 
-User Question: ${query}
-
-Provide a helpful, concise answer based on the context. Focus on Spark performance concepts.
-`;
-
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        return response.text();
+        const data = await response.json();
+        return data.text;
     } catch (error) {
         console.error("Gemini API Error Details:", error);
         return "I'm having trouble connecting to my brain (API Error). Falling back to local knowledge.\n\n" + getMockResponse(query, context);
